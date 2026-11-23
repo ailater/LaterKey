@@ -254,21 +254,30 @@ impl SettingsApp {
                     self.perm_note = Some(format!(
                         "辅助功能 {}　监听事件 {}",
                         if laterkey_platform_mac::ax_trusted() {
-                            "✓ 已授权"
+                            "√ 已授权"
                         } else {
-                            "✗ 未授权"
+                            "× 未授权"
                         },
                         if laterkey_platform_mac::listen_allowed() {
-                            "✓ 已授权"
+                            "√ 已授权"
                         } else {
-                            "✗ 未授权"
+                            "× 未授权"
                         },
                     ));
                 }
-                if let Some(note) = &self.perm_note {
-                    ui.label(RichText::new(note).size(11.5).color(DESC));
+                if outline_button(ui, "配置目录").clicked() {
+                    if let Some(path) = crate::toggles::path() {
+                        if let Some(parent) = path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                            let _ = std::process::Command::new("open").arg(parent).spawn();
+                        }
+                    }
                 }
             });
+            if let Some(note) = &self.perm_note {
+                ui.add_space(2.0);
+                ui.label(RichText::new(note).size(11.5).color(DESC));
+            }
         });
         ui.add_space(10.0);
 
@@ -334,17 +343,6 @@ impl SettingsApp {
 
         ui.add_space(14.0);
         ui.horizontal(|ui| {
-            if outline_button(ui, "辅助功能授权").clicked() {
-                crate::statusbar::open_accessibility();
-            }
-            if outline_button(ui, "配置目录").clicked() {
-                if let Some(path) = crate::toggles::path() {
-                    if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                        let _ = std::process::Command::new("open").arg(parent).spawn();
-                    }
-                }
-            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
