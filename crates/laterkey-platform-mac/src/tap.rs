@@ -29,6 +29,10 @@ const fn mask_bit(ty: u32) -> u64 {
 /// 关注的事件：键盘三类 + 左键按下 + 两种「拦截层被禁用」通知。
 /// 通知型常量是 0xFFFFFFFE / 0xFFFFFFFF，C 的 CGEventMaskBit 按硬件移位截断（&63）。
 const EVENT_MASK: u64 = mask_bit(EVENT_LEFT_MOUSE_DOWN)
+    // up/drag 必须一并订阅：只改写 down 的话，应用看到「⌘ 按下、⌃ 抬起」，
+    // 手势不完整——VS Code 的 ⌘+点击跳定义因此不触发（2026-11-23 真机定位）
+    | mask_bit(EVENT_LEFT_MOUSE_UP)
+    | mask_bit(EVENT_LEFT_MOUSE_DRAGGED)
     | mask_bit(EVENT_KEY_DOWN)
     | mask_bit(EVENT_KEY_UP)
     | mask_bit(EVENT_FLAGS_CHANGED)
@@ -435,6 +439,18 @@ impl TapCtx {
                     return null_mut();
                 }
             }
+        }
+
+        // 诊断：verbose 时把左键 down/up/drag 的原始 flags 都打出来（不改写也打），
+        // 用来对照原生 ⌘+点击 与改写后的 ⌘+点击 的完整事件序列
+        if shared.verbose {
+            eprintln!(
+                "[+{:6.2}s] 鼠标 type={} 原始 flags={:#x} ctrl_as_cmd={}",
+                shared.started.elapsed().as_secs_f32(),
+                ty,
+                CGEventGetFlags(event),
+                self.remapper.ctrl_as_cmd()
+            );
         }
 
         // Ctrl+点击 → ⌘+点击：Mac 的 ⌘+点击是编辑器跳定义（VS Code/Zed/TRAE）、
