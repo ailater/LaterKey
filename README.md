@@ -19,7 +19,22 @@
 | F5 | ⌘R | 仅当前台是浏览器 |
 | 再点一次前台应用的 Dock 图标 | 最小化它的窗口 | 再点一次还原 |
 
-## 快速开始
+## 安装
+
+```bash
+brew install --cask crazykun/ailater/laterkey
+```
+
+或从 [Releases](https://github.com/ailater/LaterKey/releases) 下载 dmg，把 LaterKey.app 拖进 /Applications。
+
+**首次使用必须授权**：系统设置 › 隐私与安全性 › 辅助功能 › 添加 LaterKey.app（launchd 常驻进程不继承其他应用的授权；同一证书签名的后续版本升级不用重新授权）。
+
+- **打开 LaterKey.app**：菜单栏托盘驻留，图标菜单里逐项开关功能，「设置…」打开面板；
+- **常驻自启**：`laterkey install`（注册 LaunchAgent，崩溃自动拉起），`laterkey uninstall` 卸载；
+- **命令行**：`laterkey run / doctor / lock`。
+
+## 从源码构建
+
 
 ```bash
 cargo build --release
