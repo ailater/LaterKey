@@ -4,6 +4,10 @@
 //! - 主线程：eframe/egui（设置窗口是主视口；托盘菜单经 winit 用户事件进来）
 //! - 拦截线程 + 后台线程：与 CLI 的 `run` 完全相同
 //! - 菜单/面板改开关 → 存 toggles.toml → 通道通知后台线程 → 拦截线程重建状态机
+//!
+//! 关窗语义：点设置窗口红点只收起窗口（CancelClose + Visible(false)），托盘驻留；
+//! 只有托盘「退出 LaterKey」或后台 stop 才真正退出。轮询与命令都在 `App::logic`
+//! 里做——窗口隐藏后 eframe 不再调 `ui`，但 `logic` 每帧照跑。
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
@@ -107,7 +111,8 @@ struct TrayApp {
     shared: Arc<laterkey_platform_mac::Shared>,
     menu_rx: Receiver<tray_icon::menu::MenuEvent>,
     tray: Option<Tray>,
-    settings_visible: bool,
+    /// 已明确要退出（托盘「退出」或后台 stop），下一次 close_requested 不再拦截。
+    quit_requested: bool,
     inner: Option<SettingsApp>,
 }
 
@@ -126,7 +131,7 @@ impl TrayApp {
             shared,
             menu_rx,
             tray: None,
-            settings_visible: false,
+            quit_requested: false,
             inner: None,
         }
     }
@@ -148,6 +153,57 @@ impl TrayApp {
 }
 
 impl eframe::App for TrayApp {
+    // 菜单轮询、关闭拦截、退出命令全放 logic()：窗口被隐藏（macOS orderOut → Occluded）
+    // 后 eframe glow 不再调用 ui()（run_ui 由 info.occluded 决定），但 logic() 无条件执行，
+    // 托盘才能在窗口收起时继续响应、退出路径也保持可用。
+    fn logic(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+        // 收菜单事件
+        while let Ok(ev) = self.menu_rx.try_recv() {
+            if let Some(action) = statusbar::translate(&ev, &self.toggles) {
+                match action {
+                    Action::Toggle(field, value) => {
+                        {
+                            let mut t = self.toggles.write().unwrap_or_else(|p| p.into_inner());
+                            set_field(&mut t, &field, value);
+                        }
+                        self.apply();
+                    }
+                    Action::OpenSettings => {
+                        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Focus);
+                    }
+                    Action::OpenAccessibility => statusbar::open_accessibility(),
+                    Action::Quit => {
+                        self.shared
+                            .stop
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        // 先标记退出意图，否则下一帧 close_requested 会被下面的拦截当成点红点吞掉
+                        self.quit_requested = true;
+                        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+                    }
+                }
+            }
+        }
+
+        // 点窗口红点 → 只收起窗口，不退出（托盘驻留）。
+        // CancelClose 必须与 close_requested 同帧进入 viewport_output 才生效；
+        // logic 每帧执行、命令进本帧输出，恰好满足时效。close_requested 是一次性事件
+        // （eframe 每帧末清空视口事件），拦截不会卡住。
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_requested {
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
+        }
+
+        // 停止标志（后台 worker 退出）→ 真退出
+        if self.shared.stop.load(std::sync::atomic::Ordering::SeqCst) {
+            self.quit_requested = true;
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+        }
+
+        // 菜单事件要能被及时看到：低频轮询（窗口隐藏时也保持）
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
     fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
         // 托盘第一次有机会就建（事件循环已在跑）
         if self.tray.is_none() {
@@ -162,36 +218,6 @@ impl eframe::App for TrayApp {
             }
         }
 
-        // 收菜单事件
-        while let Ok(ev) = self.menu_rx.try_recv() {
-            if let Some(action) = statusbar::translate(&ev, &self.toggles) {
-                match action {
-                    Action::Toggle(field, value) => {
-                        {
-                            let mut t = self.toggles.write().unwrap_or_else(|p| p.into_inner());
-                            set_field(&mut t, &field, value);
-                        }
-                        self.apply();
-                    }
-                    Action::OpenSettings => {
-                        self.settings_visible = true;
-                        ui.ctx()
-                            .send_viewport_cmd(eframe::egui::ViewportCommand::Visible(true));
-                        ui.ctx()
-                            .send_viewport_cmd(eframe::egui::ViewportCommand::Focus);
-                    }
-                    Action::OpenAccessibility => statusbar::open_accessibility(),
-                    Action::Quit => {
-                        self.shared
-                            .stop
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
-                        ui.ctx()
-                            .send_viewport_cmd(eframe::egui::ViewportCommand::Close);
-                    }
-                }
-            }
-        }
-
         // 设置窗口内容（只在可见时才有意义）
         if self.inner.is_none() {
             self.inner = Some(SettingsApp::new(
@@ -203,15 +229,6 @@ impl eframe::App for TrayApp {
         if let Some(inner) = &mut self.inner {
             eframe::App::ui(inner, ui, frame);
         }
-
-        // 停止标志 → 退出
-        if self.shared.stop.load(std::sync::atomic::Ordering::SeqCst) {
-            ui.ctx()
-                .send_viewport_cmd(eframe::egui::ViewportCommand::Close);
-        }
-
-        // 菜单事件要能被及时看到：低频轮询
-        ui.ctx().request_repaint_after(Duration::from_millis(200));
     }
 }
 

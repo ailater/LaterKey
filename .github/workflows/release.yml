@@ -92,3 +92,68 @@ jobs:
         with:
           files: dist/*
           body_path: release_body.md
+
+  # 自动更新 homebrew-ailater 的 Casks/laterkey.rb（version + dmg sha256），
+  # 免去每次发版后人工改 tap。需在 LaterKey 仓库配置 secrets.AILATER_TAP_TOKEN
+  # （crazykun/homebrew-ailater 的 repo 写权限 token）；未配置时告警跳过，不算失败。
+  bump-cask:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: 检查 tap token（未配置则警告并跳过）
+        id: tap-token
+        env:
+          AILATER_TAP_TOKEN: ${{ secrets.AILATER_TAP_TOKEN }}
+        run: |
+          if [ -z "$AILATER_TAP_TOKEN" ]; then
+            echo "::warning::未配置 secrets.AILATER_TAP_TOKEN，跳过 homebrew-ailater 的 cask 自动更新（需手工改 Casks/laterkey.rb）"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 检出 homebrew-ailater
+        if: steps.tap-token.outputs.skip != 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: crazykun/homebrew-ailater
+          token: ${{ secrets.AILATER_TAP_TOKEN }}
+          path: homebrew-ailater
+
+      - name: 按本 tag Release 的 SHA256SUMS 更新 cask 并推送
+        if: steps.tap-token.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          curl -fsSL --retry 3 -o SHA256SUMS \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/SHA256SUMS"
+          # sha256sum 输出形如「<hash>␠␠xxx.dmg」，取 dmg 行第一列
+          DMG_SHA=$(awk '$2 ~ /\.dmg$/ { print $1; exit }' SHA256SUMS)
+          if ! printf '%s\n' "$DMG_SHA" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::SHA256SUMS 里没有合法的 .dmg sha256，内容："
+            cat SHA256SUMS
+            exit 1
+          fi
+          cd homebrew-ailater
+          sed -i "s|^  version \".*\"|  version \"${VERSION}\"|" Casks/laterkey.rb
+          sed -i "s|^  sha256 \".*\"|  sha256 \"${DMG_SHA}\"|" Casks/laterkey.rb
+          # sed 没匹配上不会报错，这里兜底校验两行确实变成了目标值
+          if ! grep -qxF "  version \"${VERSION}\"" Casks/laterkey.rb; then
+            echo "::error::sed 后 version 行不是 ${VERSION}，cask 格式可能变了"
+            exit 1
+          fi
+          if ! grep -qxF "  sha256 \"${DMG_SHA}\"" Casks/laterkey.rb; then
+            echo "::error::sed 后 sha256 行不是 ${DMG_SHA}，cask 格式可能变了"
+            exit 1
+          fi
+          # 注意：diff --quiet 无改动时返回 1，只能放在 if 条件里，不能裸做收尾
+          if git diff --quiet -- Casks/laterkey.rb; then
+            echo "cask 已是 ${VERSION}，无实际改动，跳过提交（可能重复发同一 tag）"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/laterkey.rb
+          git commit -m "laterkey ${VERSION}"
+          git push origin master

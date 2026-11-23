@@ -54,6 +54,6 @@
 ## P3 · 分发与体验
 
 - [ ] GitHub Actions release 工作流（参照 LaterScreen `.github/workflows/release.yml`：自签名证书 secret 注入、universal 胖包、dmg）。
-- [ ] homebrew-ailater 的 cask（与 lscreen/latermd/laterterm 并列）。
+- [x] homebrew-ailater 的 cask（与 lscreen/latermd/laterterm 并列）：已上线，且 release 工作流在 tag 发布后自动 bump `Casks/laterkey.rb` 的 version 与 dmg sha256（commit「laterkey <版本>」推 master）。需在 LaterKey 仓库配置 **`secrets.AILATER_TAP_TOKEN`**（crazykun/homebrew-ailater 的 repo 写权限 token）；未配置时该步输出 warning 并跳过，不影响发布。
 - [ ] 配置热加载（手改 config.toml 后自动生效；目前只有界面开关会热更新）。
 - [ ] 终端组/浏览器组的应用列表设置界面（现在只能手改 config.toml）。
