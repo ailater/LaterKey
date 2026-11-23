@@ -120,7 +120,9 @@ fn run_remap(
 
     let (tx, rx) = mpsc::sync_channel(64);
     let shared = Arc::new(mac::Shared::new(tx, verbose));
-    let worker = mac::Worker::start(shared.clone(), rx, group_table)?;
+    // CLI 模式下规则不热更新：通道的发送端立刻丢弃，后台线程的 try_recv 永远为空
+    let (_update_tx, update_rx) = mpsc::channel();
+    let worker = mac::Worker::start(shared.clone(), rx, group_table, update_rx)?;
     let tap = mac::EventTap::start(
         shared.clone(),
         Remapper::new(compiled.rules.clone()),
@@ -312,6 +314,19 @@ fn lock_now() -> Result<(), String> {
 enum Source {
     File(PathBuf),
     Defaults,
+}
+
+/// 供 GUI 用的基础配置（不含开关叠加）。
+pub fn load_base_config() -> Result<Config, String> {
+    let path = default_config_path().filter(|p| p.exists());
+    match path {
+        Some(path) => {
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| format!("读不了配置文件 {}：{e}", path.display()))?;
+            laterkey_core::parse(&text)
+        }
+        None => Ok(Config::default()),
+    }
 }
 
 fn load_config(path: Option<&Path>) -> Result<(Compiled, Source), String> {

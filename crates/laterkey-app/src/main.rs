@@ -19,11 +19,25 @@ mod daemon;
 #[cfg(target_os = "macos")]
 mod duration;
 #[cfg(target_os = "macos")]
+mod gui;
+#[cfg(target_os = "macos")]
 mod instance;
+#[cfg(target_os = "macos")]
+mod settings;
+#[cfg(target_os = "macos")]
+mod statusbar;
+#[cfg(target_os = "macos")]
+mod toggles;
 
 #[cfg(target_os = "macos")]
 fn main() {
-    if let Err(err) = app::run() {
+    // 裸启动（双击 .app 或 LaunchAgent）：托盘驻留。带子命令走 CLI。
+    let result = if std::env::args_os().len() <= 1 {
+        gui::run()
+    } else {
+        app::run()
+    };
+    if let Err(err) = result {
         eprintln!("[laterkey] {err}");
         std::process::exit(1);
     }

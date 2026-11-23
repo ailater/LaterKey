@@ -15,7 +15,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use laterkey_core::{Action, Chord, Decision, Env, Input, Kind, Remapper};
+use laterkey_core::{Action, Chord, Decision, Env, Input, Kind, Remapper, Rules};
 
 use super::cf::Cf;
 use super::dock::{self, DockDecision, Tile};
@@ -97,6 +97,10 @@ pub struct Shared {
     pub stop: AtomicBool,
     pub verbose: bool,
     pub started: Instant,
+    /// 生效中的规则。后台线程写（界面改了开关），拦截线程在事件之间读。
+    pub rules: RwLock<Rules>,
+    /// 规则换过之后，拦截线程要把状态机重置一次（避免沿用旧规则的状态）
+    pub tap_needs_reset: AtomicBool,
     tiles: RwLock<Arc<[Tile]>>,
     jobs: SyncSender<Job>,
     port: AtomicPtr<c_void>,
@@ -114,6 +118,8 @@ impl Shared {
             verbose,
             started: Instant::now(),
             tiles: RwLock::new(Arc::from(Vec::new())),
+            rules: RwLock::new(Rules::default()),
+            tap_needs_reset: AtomicBool::new(false),
             jobs,
             port: AtomicPtr::new(null_mut()),
             stats: Stats::default(),
@@ -370,6 +376,15 @@ impl TapCtx {
     /// `event` 必须是类型为 `ty` 的有效键盘事件。
     unsafe fn on_key(&mut self, event: CGEventRef, ty: u32) -> CGEventRef {
         let shared = &self.shared;
+        if shared.tap_needs_reset.swap(false, Ordering::SeqCst) {
+            // 规则换了：状态机带着新规则重来，避免沿用旧规则的修饰键状态
+            let rules = shared
+                .rules
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            self.remapper = Remapper::new(rules);
+        }
         let groups = shared.groups.load(Ordering::Relaxed);
         let mut trace = TapTrace {
             stats: &shared.stats,

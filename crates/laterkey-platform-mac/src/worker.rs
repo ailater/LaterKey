@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use laterkey_core::GroupTable;
+use laterkey_core::{GroupTable, Rules};
 
 use super::access;
 use super::dock;
@@ -28,19 +28,23 @@ pub struct Worker {
     thread: Option<JoinHandle<()>>,
 }
 
+/// 界面改了开关后，把新规则经这条通道交给后台线程（重建状态机与应用组表）。
+pub type Update = (Rules, GroupTable);
+
 impl Worker {
     /// 起后台线程；跑完第一轮（前台应用、安全输入、图标缓存都已就绪）才返回。
     pub fn start(
         shared: Arc<Shared>,
         jobs: Receiver<Job>,
         groups: GroupTable,
+        updates: Receiver<Update>,
     ) -> Result<Self, String> {
         let (ready_tx, ready_rx) = mpsc::channel();
         let thread = std::thread::Builder::new()
             .name("laterkey-worker".into())
             .spawn({
                 let shared = shared.clone();
-                move || worker_loop(shared, jobs, groups, ready_tx)
+                move || worker_loop(shared, jobs, groups, updates, ready_tx)
             })
             .map_err(|e| format!("后台线程启动失败：{e}"))?;
         match ready_rx.recv() {
@@ -68,7 +72,8 @@ impl Drop for Worker {
 fn worker_loop(
     shared: Arc<Shared>,
     jobs: Receiver<Job>,
-    groups: GroupTable,
+    mut groups: GroupTable,
+    updates: Receiver<Update>,
     ready: mpsc::Sender<()>,
 ) {
     let mut ready = Some(ready);
@@ -78,6 +83,14 @@ fn worker_loop(
     let mut last_tiles = Instant::now() - TILE_INTERVAL;
 
     while !shared.stop.load(Ordering::SeqCst) {
+        // 应用新规则：非阻塞地把通道里所有更新取完，用最后一份
+        while let Ok((rules, table)) = updates.try_recv() {
+            *shared.rules.write().unwrap_or_else(|p| p.into_inner()) = rules;
+            groups = table;
+            shared.tap_needs_reset.store(true, Ordering::SeqCst);
+            info("规则已更新（来自菜单/设置面板）");
+        }
+
         match jobs.recv_timeout(POLL_INTERVAL) {
             Ok(job) => handle(&shared, job),
             Err(RecvTimeoutError::Timeout) => {}

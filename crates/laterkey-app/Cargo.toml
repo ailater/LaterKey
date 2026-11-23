@@ -11,7 +11,14 @@ path = "src/main.rs"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 clap = { version = "4", features = ["derive"] }
-libc = "0.2"
 ctrlc = "3"
+libc = "0.2"
 laterkey-core = { version = "0.1.0", path = "../laterkey-core" }
 laterkey-platform-mac = { version = "0.1.0", path = "../laterkey-platform-mac" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+# 设置面板与托盘（与 LaterScreen 同栈）
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
+tray-icon = "0.24"
+winit = "0.30"
+image = { version = "0.25", default-features = false, features = ["png"] }
