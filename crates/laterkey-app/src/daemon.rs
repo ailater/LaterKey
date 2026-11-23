@@ -23,6 +23,17 @@ fn home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
+/// 当前可执行文件所属的 .app 内二进制路径（经符号链接解析）。
+/// brew 的 /opt/homebrew/bin/laterkey 是指向 .app 的软链，解析后也在 .app 里。
+fn app_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = exe.canonicalize().unwrap_or(exe);
+    let in_bundle = exe
+        .ancestors()
+        .any(|a| a.extension().is_some_and(|e| e == "app"));
+    in_bundle.then_some(exe)
+}
+
 /// 生成 LaunchAgent 的 plist 内容。
 pub fn plist(bin: &std::path::Path) -> String {
     format!(
@@ -35,8 +46,6 @@ pub fn plist(bin: &std::path::Path) -> String {
     <key>ProgramArguments</key>
     <array>
         <string>{bin}</string>
-        <string>run</string>
-        <string>--forever</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -63,23 +72,38 @@ pub fn plist(bin: &std::path::Path) -> String {
 
 /// 安装：复制二进制、写 plist、加载。已加载时先卸掉再装（幂等）。
 pub fn install() -> Result<String, String> {
-    let source = std::env::current_exe().map_err(|e| format!("找不到自己的位置：{e}"))?;
-    let bin_dir = install_bin_dir();
     let log = log_dir();
-    std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| format!("创建 {} 失败：{e}", bin_dir.display()))?;
     std::fs::create_dir_all(&log).map_err(|e| format!("创建 {} 失败：{e}", log.display()))?;
     std::fs::create_dir_all(agent_dir()).map_err(|e| format!("创建 LaunchAgents 目录失败：{e}"))?;
 
-    let dest = bin_dir.join("laterkey");
-    // 先卸掉旧的 LaunchAgent，否则它会在我们替换二进制时把旧进程又拉起来
-    let _ = bootout();
-    if dest.exists() {
-        std::fs::remove_file(&dest)
-            .map_err(|e| format!("删除旧二进制 {} 失败：{e}", dest.display()))?;
+    // 常驻目标：优先 .app 本体——launchd 不继承任何应用的 TCC 授权，授权主体是
+    // /Applications/LaterKey.app（自签名证书身份，跨版本升级不失效）。复制一份
+    // 裸二进制副本会脱离这个身份，跑起来还是没权限。
+    let dest: PathBuf;
+    let copied: bool;
+    match app_binary() {
+        Some(app_bin) => {
+            dest = app_bin;
+            copied = false;
+        }
+        None => {
+            // 开发态（cargo 构建的裸二进制）：复制到固定位置
+            let source = std::env::current_exe().map_err(|e| format!("找不到自己的位置：{e}"))?;
+            let bin_dir = install_bin_dir();
+            std::fs::create_dir_all(&bin_dir)
+                .map_err(|e| format!("创建 {} 失败：{e}", bin_dir.display()))?;
+            let d = bin_dir.join("laterkey");
+            if d.exists() {
+                let _ = std::fs::remove_file(&d);
+            }
+            std::fs::copy(&source, &d).map_err(|e| format!("复制二进制失败：{e}"))?;
+            dest = d;
+            copied = true;
+        }
     }
-    std::fs::copy(&source, &dest).map_err(|e| format!("复制二进制失败：{e}"))?;
 
+    // 先卸掉旧的 LaunchAgent（幂等），再写 plist、加载
+    let _ = bootout();
     let plist_path = agent_dir().join(format!("{LABEL}.plist"));
     std::fs::write(&plist_path, plist(&dest)).map_err(|e| format!("写 plist 失败：{e}"))?;
 
@@ -97,8 +121,9 @@ pub fn install() -> Result<String, String> {
     }
 
     Ok(format!(
-        "已安装常驻：\n  二进制 {}\n  LaunchAgent {}\n  日志 {}\n\n登录自动启动，崩溃/被杀后自动拉起（{LABEL}）",
+        "已安装常驻（裸启动 = 菜单栏托盘）：\n  目标 {}{}\n  LaunchAgent {}\n  日志 {}\n\n登录自动启动，崩溃/被杀后自动拉起（{LABEL}）。\n首次运行需在 系统设置 › 隐私与安全性 › 辅助功能 里授权 LaterKey.app。",
         dest.display(),
+        if copied { "（开发态副本）" } else { "" },
         plist_path.display(),
         log.display(),
     ))
@@ -115,8 +140,11 @@ pub fn uninstall() -> Result<String, String> {
 }
 
 fn bootout() -> std::io::Result<std::process::Output> {
-    let domain = format!("gui/{}", unsafe { libc::getuid() });
+    // 第二参数必须是完整 service path（gui/<uid>/<label>）或 plist 路径。
+    // 之前只传 LABEL 会被当成 plist 路径而失败：旧服务卸不掉，再次 bootstrap
+    // 报「Bootstrap failed: 5: Input/output error」（2026-11-23 用户实踩）。
+    let service = format!("gui/{}/{}", unsafe { libc::getuid() }, LABEL);
     std::process::Command::new("launchctl")
-        .args(["bootout", &domain, LABEL])
+        .args(["bootout", &service])
         .output()
 }

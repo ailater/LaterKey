@@ -18,9 +18,9 @@ use crate::toggles::{self, Toggles};
 pub fn run() -> Result<(), String> {
     let _instance = crate::instance::InstanceLock::acquire()?;
 
-    if !laterkey_platform_mac::listen_allowed() {
+    if !laterkey_platform_mac::ax_trusted() {
         // 托盘里给入口去开授权；同时弹一次系统请求
-        laterkey_platform_mac::request_listen_access();
+        laterkey_platform_mac::request_ax_access();
     }
 
     let base_config = crate::app::load_base_config()?;

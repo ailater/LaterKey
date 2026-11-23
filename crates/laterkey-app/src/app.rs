@@ -110,7 +110,7 @@ fn run_remap(
     let host = mac::host_app();
     let group_table = compiled.groups.clone();
 
-    if !mac::listen_allowed() {
+    if !mac::ax_trusted() {
         return Err(
             "没有辅助功能权限：到 系统设置 › 隐私与安全性 › 辅助功能 里勾选运行本命令的应用。\
              也可以运行 `laterkey doctor --request-access` 让系统弹出请求"
@@ -208,11 +208,15 @@ fn run_remap(
 fn doctor(config: Option<&Path>, request_access: bool) -> Result<(), String> {
     if request_access {
         // 系统只会弹一次；这里只负责触发，结果看下面的权限项
-        mac::request_listen_access();
+        mac::request_ax_access();
     }
     let yes_no = |ok: bool| if ok { "有" } else { "无" };
     println!(
-        "辅助功能（拦截键盘事件）：{}",
+        "辅助功能（主动拦截/Dock/最小化的门槛）：{}",
+        yes_no(mac::ax_trusted())
+    );
+    println!(
+        "监听事件 ListenEvent（仅诊断，主动拦截不需要）：{}",
         yes_no(mac::listen_allowed())
     );
     println!("发送合成事件：{}", yes_no(mac::post_allowed()));

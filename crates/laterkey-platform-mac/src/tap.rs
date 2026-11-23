@@ -497,7 +497,7 @@ fn tap_main(
     runloop: Arc<AtomicPtr<c_void>>,
     ready: mpsc::Sender<Result<(), String>>,
 ) {
-    if !super::listen_allowed() {
+    if !super::ax_trusted() {
         let _ = ready.send(Err(
             "没有辅助功能权限：系统设置 › 隐私与安全性 › 辅助功能".into()
         ));
@@ -782,7 +782,7 @@ mod tests {
             eprintln!("跳过：需 LATERKEY_TEST_E2E=1");
             return;
         }
-        assert!(super::super::listen_allowed(), "需要辅助功能权限");
+        assert!(super::super::ax_trusted(), "需要辅助功能权限");
 
         let (tx, rx) = mpsc::sync_channel(16);
         let shared = Arc::new(Shared::new(tx, false));

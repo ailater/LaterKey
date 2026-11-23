@@ -89,7 +89,6 @@ extern "C" {
     pub fn CGEventSourceFlagsState(state_id: i32) -> u64;
     pub fn CGPreflightListenEventAccess() -> bool;
     pub fn CGPreflightPostEventAccess() -> bool;
-    pub fn CGRequestListenEventAccess() -> bool;
     pub fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> CFTypeRef;
     pub fn CGRectMakeWithDictionaryRepresentation(dict: CFTypeRef, rect: *mut CGRect) -> bool;
 
@@ -143,11 +142,33 @@ extern "C" {
     pub fn CFDictionaryGetTypeID() -> usize;
     pub fn CFNumberGetTypeID() -> usize;
     pub fn CFURLGetTypeID() -> usize;
+    pub static kCFTypeDictionaryKeyCallBacks: CFDictionaryKeyCallBacks;
+    pub static kCFTypeDictionaryValueCallBacks: CFDictionaryValueCallBacks;
+    pub fn CFDictionaryCreate(
+        allocator: *const c_void,
+        keys: *const *const c_void,
+        values: *const *const c_void,
+        num_values: isize,
+        key_callbacks: *const CFDictionaryKeyCallBacks,
+        value_callbacks: *const CFDictionaryValueCallBacks,
+    ) -> CFTypeRef;
+}
+
+/// CFDictionary 的 callbacks 是 opaque 结构体，只取地址、不访问字段。
+#[repr(C)]
+pub struct CFDictionaryKeyCallBacks {
+    _opaque: [usize; 5],
+}
+#[repr(C)]
+pub struct CFDictionaryValueCallBacks {
+    _opaque: [usize; 5],
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     pub fn AXIsProcessTrusted() -> bool;
+    pub fn AXIsProcessTrustedWithOptions(options: CFTypeRef) -> bool;
+    pub static kAXTrustedCheckOptionPrompt: CFStringRef;
     pub fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
     pub fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
