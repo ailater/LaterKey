@@ -83,7 +83,7 @@ make_dmg() {
     rm -rf "$stage" && mkdir -p "$stage"
     cp -R "$BUNDLE" "$stage/"
     ln -s /Applications "$stage/Applications"
-    local out="$DIST/laterkey-v$VERSION.dmg"
+    local out="$DIST/laterkey-v$VERSION-universal2-apple-darwin.dmg"
     rm -f "$out"
     hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$stage" -format UDZO "$out"
     echo "    $out ($(du -h "$out" | cut -f1))"
