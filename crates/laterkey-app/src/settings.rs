@@ -113,7 +113,8 @@ fn row(ui: &mut egui::Ui, label: &str, desc: &str, value: &mut bool) -> bool {
     changed
 }
 
-/// 权限行：状态点 + 名称与说明 + 右侧「打开」按钮（跳到对应系统设置面板）。
+/// 权限行：状态点 + 名称与说明（左），状态文字与「打开」按钮（右）。
+/// 状态文字不放名称旁边：不同字号在同一水平行按垂直居中排，基线会一高一低。
 fn perm_row(ui: &mut egui::Ui, name: &str, desc: &str, granted: bool, accessibility: bool) {
     ui.horizontal(|ui| {
         let (dot, state) = if granted {
@@ -124,10 +125,9 @@ fn perm_row(ui: &mut egui::Ui, name: &str, desc: &str, granted: bool, accessibil
         let (rect, _) = ui.allocate_exact_size(Vec2::new(8.0, 8.0), egui::Sense::hover());
         ui.painter().circle_filled(rect.center(), 4.0, dot);
         ui.vertical(|ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(name).size(13.0).color(TEXT));
-                ui.label(RichText::new(state).size(11.5).color(dot));
-            });
+            ui.add_space(2.0);
+            ui.label(RichText::new(name).size(13.0).color(TEXT));
+            ui.add_space(2.0);
             ui.label(RichText::new(desc).size(11.0).color(DESC));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -138,6 +138,7 @@ fn perm_row(ui: &mut egui::Ui, name: &str, desc: &str, granted: bool, accessibil
                     crate::statusbar::open_listen_event();
                 }
             }
+            ui.label(RichText::new(state).size(11.5).color(dot));
         });
     });
     ui.add_space(6.0);
