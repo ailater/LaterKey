@@ -14,6 +14,7 @@ const CARD: Color32 = Color32::from_rgb(0x1f, 0x23, 0x35);
 const BORDER: Color32 = Color32::from_rgb(0x29, 0x2e, 0x42);
 const TEXT: Color32 = Color32::from_rgb(0xc0, 0xca, 0xf5);
 const MUTED: Color32 = Color32::from_rgb(0x56, 0x5f, 0x89);
+const DESC: Color32 = Color32::from_rgb(0x8a, 0x92, 0xb2);
 const ACCENT: Color32 = Color32::from_rgb(0x7a, 0xa2, 0xf7);
 const GREEN: Color32 = Color32::from_rgb(0x9e, 0xce, 0x6a);
 const ORANGE: Color32 = Color32::from_rgb(0xe0, 0xaf, 0x68);
@@ -91,20 +92,55 @@ fn card(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
 }
 
 /// 一行「标签 + 说明 + 右侧开关」，返回是否变动。
+/// 行高固定（标题 14 + 说明 11.5 + 间距），避免右侧开关把行高压扁导致文字重叠。
 fn row(ui: &mut egui::Ui, label: &str, desc: &str, value: &mut bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
+        ui.set_min_height(42.0);
         ui.vertical(|ui| {
+            ui.add_space(2.0);
             ui.label(RichText::new(label).size(14.0).color(TEXT));
             if !desc.is_empty() {
-                ui.label(RichText::new(desc).size(11.5).color(MUTED));
+                ui.add_space(2.0);
+                ui.label(RichText::new(desc).size(11.5).color(DESC));
             }
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             changed = switch(ui, value).changed();
         });
     });
+    ui.add_space(6.0);
     changed
+}
+
+/// 权限行：状态点 + 名称与说明 + 右侧「打开」按钮（跳到对应系统设置面板）。
+fn perm_row(ui: &mut egui::Ui, name: &str, desc: &str, granted: bool, accessibility: bool) {
+    ui.horizontal(|ui| {
+        let (dot, state) = if granted {
+            (GREEN, "已授权")
+        } else {
+            (ORANGE, "未授权")
+        };
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(8.0, 8.0), egui::Sense::hover());
+        ui.painter().circle_filled(rect.center(), 4.0, dot);
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(name).size(13.0).color(TEXT));
+                ui.label(RichText::new(state).size(11.5).color(dot));
+            });
+            ui.label(RichText::new(desc).size(11.0).color(DESC));
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if outline_button(ui, "打开").clicked() {
+                if accessibility {
+                    crate::statusbar::open_accessibility();
+                } else {
+                    crate::statusbar::open_listen_event();
+                }
+            }
+        });
+    });
+    ui.add_space(6.0);
 }
 
 fn outline_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
@@ -117,6 +153,8 @@ pub struct SettingsApp {
     toggles: std::sync::Arc<std::sync::RwLock<Toggles>>,
     updates: std::sync::mpsc::Sender<(laterkey_core::Rules, laterkey_core::GroupTable)>,
     base_config: laterkey_core::Config,
+    /// 「重新检测」按钮的最近一次结果（显示在按钮旁）
+    perm_note: Option<String>,
 }
 
 impl SettingsApp {
@@ -129,6 +167,7 @@ impl SettingsApp {
             toggles,
             updates,
             base_config,
+            perm_note: None,
         }
     }
 
@@ -150,6 +189,24 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // 内容超出窗口时可滚动：卡片全部展开时高于默认窗口高度
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: 10,
+                        right: 10,
+                        top: 10,
+                        bottom: 10,
+                    })
+                    .show(ui, |ui| self.content(ui));
+            });
+    }
+}
+
+impl SettingsApp {
+    fn content(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         let mut t = self
             .toggles
@@ -157,9 +214,11 @@ impl eframe::App for SettingsApp {
             .unwrap_or_else(|p| p.into_inner())
             .clone();
 
-        // 顶部：名称 + 总开关
+        // 顶部：名称 + 总开关。行高固定，右侧开关与标题块垂直居中
         ui.horizontal(|ui| {
+            ui.set_min_height(56.0);
             ui.vertical(|ui| {
+                ui.add_space(2.0);
                 ui.label(RichText::new("LaterKey").size(22.0).color(TEXT).strong());
                 ui.label(
                     RichText::new("让 Windows 键盘按 Windows 习惯工作")
@@ -177,29 +236,41 @@ impl eframe::App for SettingsApp {
         });
         ui.add_space(4.0);
 
-        // 权限状态
-        ui.horizontal(|ui| {
-            let granted = laterkey_platform_mac::ax_trusted();
-            let (dot, text) = if granted {
-                (GREEN, "辅助功能已授权")
-            } else {
-                (ORANGE, "需要辅助功能授权")
-            };
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(8.0, 8.0), egui::Sense::hover());
-            ui.painter().circle_filled(rect.center(), 4.0, dot);
-            ui.label(RichText::new(text).size(12.0).color(dot));
-            if !granted {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .link(RichText::new("去授权").size(12.0).color(ACCENT))
-                        .clicked()
-                    {
-                        crate::statusbar::open_accessibility();
-                    }
-                });
-            }
+        // 权限卡片：两项权限各自的检测状态 + 跳转按钮 + 重新检测
+        let ax = laterkey_platform_mac::ax_trusted();
+        let listen = laterkey_platform_mac::listen_allowed();
+        card(ui, "权限", |ui| {
+            perm_row(ui, "辅助功能", "主动拦截、Dock、最小化都靠它", ax, true);
+            perm_row(
+                ui,
+                "监听事件 ListenEvent",
+                "仅诊断需要，主动拦截不依赖它",
+                listen,
+                false,
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if outline_button(ui, "重新检测").clicked() {
+                    self.perm_note = Some(format!(
+                        "辅助功能 {}　监听事件 {}",
+                        if laterkey_platform_mac::ax_trusted() {
+                            "✓ 已授权"
+                        } else {
+                            "✗ 未授权"
+                        },
+                        if laterkey_platform_mac::listen_allowed() {
+                            "✓ 已授权"
+                        } else {
+                            "✗ 未授权"
+                        },
+                    ));
+                }
+                if let Some(note) = &self.perm_note {
+                    ui.label(RichText::new(note).size(11.5).color(DESC));
+                }
+            });
         });
-        ui.add_space(8.0);
+        ui.add_space(10.0);
 
         ui.add_enabled_ui(t.master, |ui| {
             card(ui, "按键映射", |ui| {

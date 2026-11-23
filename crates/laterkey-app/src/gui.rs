@@ -67,7 +67,7 @@ fn run_event_loop(
 
     // eframe 的 run_native 接管主线程；托盘在它的 event loop 里创建
     let viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([420.0, 640.0])
+        .with_inner_size([440.0, 780.0])
         .with_title("LaterKey 设置")
         .with_visible(false); // 默认不显示，点「设置…」才显示
 

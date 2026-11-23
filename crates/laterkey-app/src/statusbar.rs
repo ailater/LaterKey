@@ -141,7 +141,18 @@ pub fn translate(ev: &MenuEvent, toggles: &Arc<RwLock<Toggles>>) -> Option<Actio
 
 /// 打开系统设置的辅助功能面板。
 pub fn open_accessibility() {
+    open_privacy_pane("Privacy_Accessibility");
+}
+
+/// 打开系统设置的「监听事件」面板（macOS 15+ 的独立权限项）。
+pub fn open_listen_event() {
+    open_privacy_pane("Privacy_ListenEvent");
+}
+
+fn open_privacy_pane(anchor: &str) {
     let _ = std::process::Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .arg(format!(
+            "x-apple.systempreferences:com.apple.preference.security?{anchor}"
+        ))
         .spawn();
 }
