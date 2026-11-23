@@ -15,9 +15,14 @@ pub struct InstanceLock {
 }
 
 impl InstanceLock {
-    /// 抢锁。已有实例持有时返回 Err（里面写着对方 pid）。
+    /// 抢锁（生产路径）。已有实例持有时返回 Err（里面写着对方 pid）。
     pub fn acquire() -> Result<Self, String> {
-        let path = lock_path();
+        Self::acquire_at(lock_path())
+    }
+
+    /// 在指定路径抢锁。测试用独立路径：生产常驻进程持有默认锁时，
+    /// 用同一路径的测试会失败（也会干扰运行中的实例）。
+    pub fn acquire_at(path: PathBuf) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -78,12 +83,16 @@ mod tests {
 
     #[test]
     fn second_instance_is_rejected_and_first_exit_releases() {
-        let a = InstanceLock::acquire().unwrap();
-        let err = InstanceLock::acquire().unwrap_err();
+        let path =
+            std::env::temp_dir().join(format!("laterkey-test-lock-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let a = InstanceLock::acquire_at(path.clone()).unwrap();
+        let err = InstanceLock::acquire_at(path.clone()).unwrap_err();
         assert!(err.contains("不能重复启动"), "{err}");
         drop(a);
         // 第一个退出后锁释放，可以再来一个
-        let b = InstanceLock::acquire().unwrap();
+        let b = InstanceLock::acquire_at(path.clone()).unwrap();
         drop(b);
+        let _ = std::fs::remove_file(&path);
     }
 }

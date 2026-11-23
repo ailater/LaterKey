@@ -67,7 +67,7 @@ fn run_event_loop(
 
     // eframe 的 run_native 接管主线程；托盘在它的 event loop 里创建
     let viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([380.0, 520.0])
+        .with_inner_size([400.0, 440.0])
         .with_title("LaterKey 设置")
         .with_visible(false); // 默认不显示，点「设置…」才显示
 
@@ -89,6 +89,8 @@ fn run_event_loop(
         "LaterKey",
         options,
         Box::new(move |cc| {
+            // 中文字体：默认字体不含 CJK，设置面板会全是方框
+            crate::font::setup(&cc.egui_ctx);
             // 托盘必须在事件循环跑起来之后创建（macOS 全屏应用兼容性）
             cc.egui_ctx.request_repaint();
             Ok(Box::new(app))

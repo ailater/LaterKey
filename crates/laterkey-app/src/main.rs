@@ -19,6 +19,8 @@ mod daemon;
 #[cfg(target_os = "macos")]
 mod duration;
 #[cfg(target_os = "macos")]
+mod font;
+#[cfg(target_os = "macos")]
 mod gui;
 #[cfg(target_os = "macos")]
 mod instance;
