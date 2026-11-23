@@ -21,6 +21,8 @@ pub type AXValueRef = *mut c_void;
 
 // ---- CGEventType（CGEventTypes.h）
 pub const EVENT_LEFT_MOUSE_DOWN: u32 = 1;
+pub const EVENT_LEFT_MOUSE_UP: u32 = 2;
+pub const EVENT_LEFT_MOUSE_DRAGGED: u32 = 6;
 pub const EVENT_KEY_DOWN: u32 = 10;
 pub const EVENT_KEY_UP: u32 = 11;
 pub const EVENT_FLAGS_CHANGED: u32 = 12;
@@ -75,6 +77,13 @@ extern "C" {
     pub fn CGEventGetFlags(event: CGEventRef) -> u64;
     pub fn CGEventSetFlags(event: CGEventRef, flags: u64);
     pub fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
+    #[cfg(test)]
+    pub fn CGEventCreateMouseEvent(
+        source: CGEventSourceRef,
+        mouse_type: u32,
+        mouse_cursor_position: CGPoint,
+        mouse_button: u32,
+    ) -> CGEventRef;
     pub fn CGEventCreateKeyboardEvent(
         source: CGEventSourceRef,
         virtual_key: u16,

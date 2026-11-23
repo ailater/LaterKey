@@ -362,7 +362,9 @@ unsafe fn dispatch(ctx: &mut TapCtx, ty: u32, event: CGEventRef) -> CGEventRef {
     }
 
     match ty {
-        EVENT_LEFT_MOUSE_DOWN if ctx.opts.dock => ctx.on_mouse_down(event),
+        EVENT_LEFT_MOUSE_DOWN | EVENT_LEFT_MOUSE_UP | EVENT_LEFT_MOUSE_DRAGGED => {
+            ctx.on_mouse(event, ty)
+        }
         EVENT_KEY_DOWN | EVENT_KEY_UP | EVENT_FLAGS_CHANGED if ctx.opts.keys => {
             ctx.on_key(event, ty)
         }
@@ -407,31 +409,55 @@ impl TapCtx {
         }
     }
 
+    /// 鼠标事件：Dock 再点最小化（仅左键按下）+ Ctrl+点击的修饰键换算。
+    ///
     /// # Safety
     ///
-    /// `event` 必须是有效的左键按下事件。
-    unsafe fn on_mouse_down(&mut self, event: CGEventRef) -> CGEventRef {
+    /// `event` 必须是有效的左键事件（down/up/drag）。
+    unsafe fn on_mouse(&mut self, event: CGEventRef, ty: u32) -> CGEventRef {
         let shared = &self.shared;
-        let point = CGEventGetLocation(event);
-        let front_pid = shared.front_pid.load(Ordering::Relaxed);
 
-        // 先做纯内存命中：不在运行中应用的图标上，或者点的不是前台应用的图标，
-        // 就立刻放行，不产生任何系统调用
-        let tiles = shared.tiles();
-        if dock::tile_at(&tiles, point).map(|t| t.pid) != Some(front_pid) {
-            return event;
+        if ty == EVENT_LEFT_MOUSE_DOWN && self.opts.dock {
+            let point = CGEventGetLocation(event);
+            let front_pid = shared.front_pid.load(Ordering::Relaxed);
+
+            // 先做纯内存命中：不在运行中应用的图标上，或者点的不是前台应用的图标，
+            // 就立刻放行，不产生任何系统调用
+            let tiles = shared.tiles();
+            if dock::tile_at(&tiles, point).map(|t| t.pid) == Some(front_pid) {
+                let dock_pid = shared.dock_pid.load(Ordering::Relaxed);
+                if dock::decide(point, front_pid, dock_pid, &dock::on_screen_windows())
+                    != DockDecision::Pass
+                {
+                    if !shared.submit(Job::Minimize { pid: front_pid }) {
+                        shared.stats.dropped_jobs.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return null_mut();
+                }
+            }
         }
 
-        let dock_pid = shared.dock_pid.load(Ordering::Relaxed);
-        if dock::decide(point, front_pid, dock_pid, &dock::on_screen_windows())
-            == DockDecision::Pass
-        {
-            return event;
+        // Ctrl+点击 → ⌘+点击：Mac 的 ⌘+点击是编辑器跳定义（VS Code/Zed/TRAE）、
+        // 浏览器新标签、访达多选，对应 Windows 的 Ctrl+点击。键盘事件的 Ctrl 已被
+        // 改写成 ⌘，点击事件不改的话应用收到的是 ⌃+点击（右键菜单）。
+        if self.opts.keys && self.remapper.ctrl_as_cmd() {
+            let raw = CGEventGetFlags(event);
+            let swapped = laterkey_core::flags::swap(raw, &laterkey_core::flags::CTL_TO_CMD);
+            if swapped != raw {
+                CGEventSetFlags(event, swapped);
+                shared.stats.rewrites.fetch_add(1, Ordering::Relaxed);
+                if shared.verbose {
+                    eprintln!(
+                        "[+{:6.2}s] 改写 鼠标 type={} flags={:#x} → flags={:#x}",
+                        shared.started.elapsed().as_secs_f32(),
+                        ty,
+                        raw,
+                        swapped
+                    );
+                }
+            }
         }
-        if !shared.submit(Job::Minimize { pid: front_pid }) {
-            shared.stats.dropped_jobs.fetch_add(1, Ordering::Relaxed);
-        }
-        null_mut()
+        event
     }
 }
 
@@ -758,6 +784,77 @@ mod tests {
             Outcome::Pass
         );
         assert_eq!(state(&release), (keys::COMMAND, 0));
+    }
+
+    #[test]
+    fn ctrl_click_is_rewritten_to_cmd_click() {
+        let (tx, _rx) = mpsc::sync_channel(16);
+        let shared = Arc::new(Shared::new(tx, false));
+        let mut ctx = TapCtx {
+            shared: shared.clone(),
+            remapper: Remapper::new(Rules::default()),
+            opts: TapOptions {
+                keys: true,
+                dock: false,
+                verbose: false,
+                swallow_tagged: false,
+            },
+            was_paused: false,
+        };
+        // 按住物理 Ctrl：键盘事件已被改写成 ⌘
+        let ctl = key(EVENT_FLAGS_CHANGED, keys::CONTROL, CTL_DOWN);
+        let mut log = Log::default();
+        unsafe { decide_key(&mut ctx.remapper, 0, ctl.0, EVENT_FLAGS_CHANGED, &mut log) };
+        assert!(ctx.remapper.ctrl_as_cmd());
+
+        // 合成带 ⌃ 标志的左键按下：应被换成 ⌘ 标志（VS Code 跳定义、浏览器新标签）
+        let ev = unsafe {
+            let e = CGEventCreateMouseEvent(
+                std::ptr::null_mut(),
+                EVENT_LEFT_MOUSE_DOWN,
+                crate::geometry::CGPoint { x: 100.0, y: 100.0 },
+                0,
+            );
+            CGEventSetFlags(e, CTL_DOWN);
+            Cf::owned(e)
+        };
+        let out = unsafe { ctx.on_mouse(ev.0, EVENT_LEFT_MOUSE_DOWN) };
+        assert!(!out.is_null(), "普通点击应放行");
+        let f = unsafe { CGEventGetFlags(ev.0) };
+        assert_eq!(
+            f & (flags::COMMAND | flags::L_CMD),
+            flags::COMMAND | flags::L_CMD
+        );
+        assert_eq!(f & (flags::CONTROL | flags::L_CTL), 0, "⌃ 位应被清掉");
+    }
+
+    #[test]
+    fn click_without_ctrl_is_untouched() {
+        let (tx, _rx) = mpsc::sync_channel(16);
+        let shared = Arc::new(Shared::new(tx, false));
+        let mut ctx = TapCtx {
+            shared: shared.clone(),
+            remapper: Remapper::new(Rules::default()),
+            opts: TapOptions {
+                keys: true,
+                dock: false,
+                verbose: false,
+                swallow_tagged: false,
+            },
+            was_paused: false,
+        };
+        let ev = unsafe {
+            let e = CGEventCreateMouseEvent(
+                std::ptr::null_mut(),
+                EVENT_LEFT_MOUSE_DOWN,
+                crate::geometry::CGPoint { x: 100.0, y: 100.0 },
+                0,
+            );
+            Cf::owned(e)
+        };
+        let out = unsafe { ctx.on_mouse(ev.0, EVENT_LEFT_MOUSE_DOWN) };
+        assert!(!out.is_null());
+        assert_eq!(unsafe { CGEventGetFlags(ev.0) }, 0, "没按 Ctrl 时点击原样");
     }
 
     fn wait_until(mut cond: impl FnMut() -> bool) -> bool {

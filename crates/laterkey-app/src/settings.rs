@@ -102,6 +102,8 @@ impl eframe::App for SettingsApp {
             if ui.button("查看配置目录").clicked() {
                 if let Some(path) = crate::toggles::path() {
                     if let Some(parent) = path.parent() {
+                        // 目录还不存在（从未保存过配置）时先建，否则 open 报错
+                        let _ = std::fs::create_dir_all(parent);
                         let _ = std::process::Command::new("open").arg(parent).spawn();
                     }
                 }

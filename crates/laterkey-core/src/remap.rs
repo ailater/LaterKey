@@ -225,6 +225,13 @@ impl Remapper {
         &self.rules
     }
 
+    /// 当前按住的物理 Ctrl 是否正以 ⌘ 的身份出现。
+    /// 平台层用它换算**鼠标事件**的修饰键：⌘+点击是 Mac 的跳定义/多选/新标签，
+    /// 对应 Windows 的 Ctrl+点击。点击事件不改的话，应用收到的是 ⌃+点击（右键菜单）。
+    pub fn ctrl_as_cmd(&self) -> bool {
+        self.ctl_as_cmd
+    }
+
     /// 清空跟踪状态。漏看了一段事件流（安全输入期间、拦截层被系统禁用）之后调用。
     pub fn reset(&mut self) {
         self.ctl_held = 0;
