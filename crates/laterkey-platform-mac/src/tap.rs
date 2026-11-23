@@ -868,9 +868,13 @@ mod tests {
             );
             Cf::owned(e)
         };
+        // 合成鼠标事件的 flags 会带上系统当前的修饰键状态（如 CapsLock），
+        // 不能断言等于 0；该测试关心的是「没按 Ctrl 时不被改写」
+        let before = unsafe { CGEventGetFlags(ev.0) };
         let out = unsafe { ctx.on_mouse(ev.0, EVENT_LEFT_MOUSE_DOWN) };
         assert!(!out.is_null());
-        assert_eq!(unsafe { CGEventGetFlags(ev.0) }, 0, "没按 Ctrl 时点击原样");
+        let after = unsafe { CGEventGetFlags(ev.0) };
+        assert_eq!(after, before, "没按 Ctrl 时点击原样");
     }
 
     fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
