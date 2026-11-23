@@ -1,0 +1,17 @@
+[package]
+name = "laterkey"
+description = "让 Windows 布局的键盘在 macOS 上按 Windows 习惯工作"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "laterkey"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+ctrlc = "3"
+laterkey-core = { version = "0.1.0", path = "../laterkey-core" }
+laterkey-platform-mac = { version = "0.1.0", path = "../laterkey-platform-mac" }

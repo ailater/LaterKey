@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/laterkey-core",
+  "crates/laterkey-platform-mac",
+  "crates/laterkey-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# 发布产物体积优化，口径同 LaterScreen
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# 开发期保持较快编译
+[profile.dev]
+opt-level = 1

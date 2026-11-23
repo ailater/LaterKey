@@ -1,0 +1,25 @@
+[package]
+name = "laterkey-platform-mac"
+description = "LaterKey 的 macOS 平台层：事件拦截、前台应用跟踪、合成按键、锁屏、Dock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+laterkey-core = { version = "0.1.0", path = "../laterkey-core" }
+libc = "0.2"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "NSArray",
+  "NSDate",
+  "NSEnumerator",
+  "NSString",
+  "NSURL",
+  "std",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "NSRunningApplication",
+  "NSWorkspace",
+  "libc",
+  "std",
+] }
