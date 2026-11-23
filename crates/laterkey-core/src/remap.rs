@@ -3,8 +3,10 @@
 //! 回调（平台层）只负责把 CGEvent 读成 [`Input`]、把 [`Decision`] 写回事件，
 //! 这样修饰键的所有时序都能用单元测试覆盖，不必手敲键盘验证。
 
-use crate::flags::{self, ANY_MODIFIER, COMMAND, CONTROL, L_ALT};
-use crate::keys::{self, DELETE, L, LEFT, RIGHT, RIGHT_COMMAND, RIGHT_CONTROL, SPACE, TAB, V};
+use crate::flags::{self, ALTERNATE, ANY_MODIFIER, COMMAND, CONTROL, L_ALT};
+use crate::keys::{
+    self, DELETE, ESCAPE, L, LEFT, RIGHT, RIGHT_COMMAND, RIGHT_CONTROL, SPACE, TAB, V,
+};
 
 /// 事件类型。修饰键没有 KeyDown/KeyUp，只有 FlagsChanged。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +89,8 @@ impl Env {
 pub enum Action {
     ClipboardHistory,
     LockScreen,
+    /// 呼出 macOS 强制退出窗口（任务管理器对应物）
+    TaskManager,
 }
 
 /// 一组合成按键：键码 + 标志位。
@@ -134,6 +138,8 @@ pub struct Rules {
     pub win_key_lock: bool,
     /// Win(⌘) + V 剪贴板历史
     pub win_key_clipboard: bool,
+    /// 任务管理器：物理 Ctrl+Alt+Del(退格) 或物理 Ctrl+Esc 呼出强制退出
+    pub task_manager: bool,
     pub substitutes: Vec<Substitute>,
 }
 
@@ -148,6 +154,7 @@ impl Default for Rules {
             // 剪贴板历史面板还没做。开启后 ⌘V 会被吞掉，在面板落地前必须保持关闭，
             // 否则用户连粘贴都没了。
             win_key_clipboard: false,
+            task_manager: true,
             substitutes: Vec::new(),
         }
     }
@@ -313,6 +320,20 @@ impl Remapper {
             if let Some(action) = action {
                 self.swallowed.push(ev.keycode);
                 return Decision::Action(action);
+            }
+        }
+
+        // 6.5) 任务管理器（macOS 强制退出窗口）：物理 Ctrl+Alt+Del(退格) 或
+        //      物理 Ctrl+Esc。同样用 raw 物理位判断，与改写无关；组合里不含
+        //      物理 ⌘，不会被上面的 Win 键动作截走。
+        if self.rules.task_manager && ev.kind == Kind::KeyDown && !ev.repeat {
+            // 修饰键必须精确等于（bare 是「含其中之一」，会把 Ctrl+退格 也吸进来）
+            let mods = raw & ANY_MODIFIER;
+            let hit = (ev.keycode == DELETE && mods == CONTROL | ALTERNATE)
+                || (ev.keycode == ESCAPE && mods == CONTROL);
+            if hit {
+                self.swallowed.push(ev.keycode);
+                return Decision::Action(Action::TaskManager);
             }
         }
 
@@ -1147,6 +1168,55 @@ mod tests {
         assert_eq!(
             r.on_input(Input::key_down(V, CMD_L), &env),
             Decision::Action(Action::ClipboardHistory)
+        );
+    }
+
+    /// 任务管理器：物理 Ctrl+Alt+Del(退格) 与物理 Ctrl+Esc 都呼出强制退出窗口
+    #[test]
+    fn ctrl_alt_del_and_ctrl_esc_open_task_manager() {
+        let env = plain();
+        let mut r = Remapper::new(Rules::default());
+        assert_eq!(
+            r.on_input(Input::key_down(DELETE, CTL_DOWN | ALT_DOWN), &env),
+            Decision::Action(Action::TaskManager)
+        );
+        let mut r = Remapper::new(Rules::default());
+        assert_eq!(
+            r.on_input(Input::key_down(ESCAPE, CTL_DOWN), &env),
+            Decision::Action(Action::TaskManager)
+        );
+    }
+
+    #[test]
+    fn task_manager_requires_exact_modifiers() {
+        let env = plain();
+        // flags 改写跟的是修饰键按下状态，每个用例先发 FlagsChanged 再发按键。
+        // 物理 Win+Esc：不是任务管理器，走双向互换（→ ⌃Esc）
+        let mut r = Remapper::new(Rules::default());
+        r.on_input(Input::flags_changed(keys::COMMAND, CMD_L), &env);
+        let got = r.on_input(Input::key_down(ESCAPE, CMD_L), &env);
+        assert!(
+            matches!(got, Decision::Rewrite { .. }),
+            "物理 Win+Esc 应走改写，实际 {got:?}"
+        );
+        // 多了 Shift 也不触发（→ ⌘⇧Esc）
+        let mut r = Remapper::new(Rules::default());
+        r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &env);
+        let got = r.on_input(Input::key_down(ESCAPE, CTL_DOWN | SHIFT_DOWN), &env);
+        assert!(
+            matches!(got, Decision::Rewrite { .. }),
+            "Ctrl+Shift+Esc 应走改写，实际 {got:?}"
+        );
+        // 关掉开关后恢复原样（物理 Ctrl+Esc → ⌘Esc）
+        let mut r = Remapper::new(Rules {
+            task_manager: false,
+            ..Default::default()
+        });
+        r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &env);
+        let got = r.on_input(Input::key_down(ESCAPE, CTL_DOWN), &env);
+        assert!(
+            matches!(got, Decision::Rewrite { .. }),
+            "开关关时 Ctrl+Esc 应走改写，实际 {got:?}"
         );
     }
 

@@ -17,6 +17,7 @@ pub struct Toggles {
     pub ctrl_arrows: bool,
     pub win_key_lock: bool,
     pub win_key_clipboard: bool,
+    pub task_manager: bool,
     pub dock_click_minimize: bool,
     pub finder_f2: bool,
     pub browser_f5: bool,
@@ -33,6 +34,7 @@ impl Default for Toggles {
             win_key_lock: true,
             // 剪贴板历史面板尚未实现，开了会吞掉 ⌘V
             win_key_clipboard: false,
+            task_manager: true,
             dock_click_minimize: true,
             finder_f2: true,
             browser_f5: true,
@@ -77,6 +79,7 @@ pub fn apply(base: &Config, toggles: &Toggles) -> Result<Compiled, String> {
     cfg.remap.ctrl_arrows = toggles.master && toggles.ctrl_arrows;
     cfg.remap.win_key_lock = toggles.master && toggles.win_key_lock;
     cfg.remap.win_key_clipboard = toggles.master && toggles.win_key_clipboard;
+    cfg.remap.task_manager = toggles.master && toggles.task_manager;
     cfg.remap.dock_click_minimize = toggles.master && toggles.dock_click_minimize;
     cfg.substitute
         .retain(|sub| match sub.key.to_ascii_lowercase().as_str() {
@@ -135,6 +138,13 @@ mod tests {
     #[test]
     fn clipboard_stays_off_by_default() {
         assert!(!Toggles::default().win_key_clipboard);
+    }
+
+    #[test]
+    fn task_manager_on_by_default() {
+        assert!(Toggles::default().task_manager);
+        let compiled = apply(&Config::default(), &Toggles::default()).unwrap();
+        assert!(compiled.rules.task_manager);
     }
 
     #[test]

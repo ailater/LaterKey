@@ -315,6 +315,12 @@ impl SettingsApp {
                     "尚未实现，先别打开",
                     &mut t.win_key_clipboard,
                 );
+                changed |= row(
+                    ui,
+                    "任务管理器",
+                    "Ctrl+Alt+Del 或 Ctrl+Esc 呼出强制退出",
+                    &mut t.task_manager,
+                );
             });
             ui.add_space(10.0);
             card(ui, "按应用生效", |ui| {

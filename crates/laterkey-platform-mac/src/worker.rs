@@ -168,6 +168,18 @@ fn handle(shared: &Shared, job: Job) {
         Job::Action(laterkey_core::Action::ClipboardHistory) => {
             info("剪贴板历史面板尚未实现：这次 ⌘V 被吞掉了（可在配置里关掉 win_key_clipboard）");
         }
+        Job::Action(laterkey_core::Action::TaskManager) => {
+            // 任务管理器 = macOS 强制退出窗口：合成 ⌘⌥Esc（OWN_TAG 让拦截层放行）
+            let force_quit = laterkey_core::Chord {
+                keycode: laterkey_core::keys::ESCAPE,
+                flags: laterkey_core::flags::COMMAND | laterkey_core::flags::ALTERNATE,
+            };
+            if post::chord(force_quit) {
+                info("已呼出强制退出窗口（⌘⌥Esc）");
+            } else {
+                info("强制退出窗口呼出失败");
+            }
+        }
         Job::Minimize { pid } => {
             let n = dock::minimize_app(pid);
             shared
