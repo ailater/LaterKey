@@ -5,7 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[dependencies]
+# 全部依赖都是 Apple 平台专用：Linux/Windows 上本 crate 编译为空（lib.rs 里 cfg 隔离），
+# 依赖也必须收进 macOS 条件段，否则 Linux CI 会编 objc2 并 compile_error。
+[target.'cfg(target_os = "macos")'.dependencies]
 laterkey-core = { version = "0.1.0", path = "../laterkey-core" }
 libc = "0.2"
 objc2 = "0.6"
