@@ -136,5 +136,12 @@ EOF
 
 BIN=$(build | tail -1)
 assemble "$BIN"
-[[ $UNIVERSAL == 1 ]] && make_dmg
-[[ $DO_INSTALL == 1 ]] && install_agent
+# 注意：不能用 `[[ ... ]] && cmd` 收尾——条件不成立时整条命令返回 1，
+# 脚本退出码随之变 1，CI 会把成功的打包判成失败（v0.1.0 首次发布踩过）。
+if [[ $UNIVERSAL == 1 ]]; then
+    make_dmg
+fi
+if [[ $DO_INSTALL == 1 ]]; then
+    install_agent
+fi
+exit 0
