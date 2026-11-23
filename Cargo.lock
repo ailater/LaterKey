@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "laterkey"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "ctrlc",
@@ -1623,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "laterkey-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "toml 0.9.12+spec-1.1.0",
@@ -1631,7 +1631,7 @@ dependencies = [
 
 [[package]]
 name = "laterkey-platform-mac"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "laterkey-core",
  "libc",
