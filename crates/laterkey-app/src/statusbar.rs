@@ -21,7 +21,7 @@ const ITEMS: &[(&str, &str)] = &[
     ("alt_tab", "Alt+Tab 切换应用"),
     ("ctrl_arrows", "Ctrl+←/→/⌫ 按词跳转"),
     ("win_key_lock", "Win+L 锁屏"),
-    ("win_key_clipboard", "Win+V 剪贴板历史（未实现）"),
+    ("win_key_clipboard", "Win+V 剪贴板历史"),
     ("task_manager", "Ctrl+Alt+Del 任务管理器"),
     ("dock_click_minimize", "再点 Dock 图标最小化"),
     ("finder_f2", "访达里 F2 重命名"),

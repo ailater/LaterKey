@@ -18,6 +18,8 @@ mod geometry;
 #[cfg(target_os = "macos")]
 mod lock;
 #[cfg(target_os = "macos")]
+mod pasteboard;
+#[cfg(target_os = "macos")]
 mod post;
 #[cfg(target_os = "macos")]
 mod tap;
@@ -29,13 +31,16 @@ pub use access::*;
 #[cfg(target_os = "macos")]
 pub use dock::Tile;
 #[cfg(target_os = "macos")]
-pub use focus::{dock_pid, frontmost, host_app, running_apps, FrontApp, RunningApp};
+pub use focus::{
+    activate_pid, app_name_for_bundle, bundle_id_for_pid, dock_pid, frontmost, host_app,
+    running_apps, FrontApp, RunningApp,
+};
 #[cfg(target_os = "macos")]
 pub use lock::{immediate_available, lock_screen, LockMethod};
 #[cfg(target_os = "macos")]
 pub use tap::{decide_key, Effect, EventTap, Job, Outcome, Shared, Stats, TapOptions, Trace};
 #[cfg(target_os = "macos")]
-pub use worker::Worker;
+pub use worker::{PanelCommand, Worker};
 
 /// 当前 Dock 上的应用图标（诊断用）。
 #[cfg(target_os = "macos")]

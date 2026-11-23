@@ -14,7 +14,9 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use laterkey_core::{Config, GroupTable, Rules};
+use laterkey_platform_mac::PanelCommand;
 
+use crate::clipboard_panel::Panel;
 use crate::settings::SettingsApp;
 use crate::statusbar::{self, Action, Tray};
 use crate::toggles::{self, Toggles};
@@ -38,11 +40,16 @@ pub fn run() -> Result<(), String> {
     let shared = Arc::new(laterkey_platform_mac::Shared::new(tx, false));
     *shared.rules.write().unwrap_or_else(|p| p.into_inner()) = compiled.rules.clone();
     let (update_tx, update_rx) = mpsc::channel();
+    // 面板 → worker：贴回 / 清空
+    let (panel_tx, panel_rx) = mpsc::channel();
     let _worker = laterkey_platform_mac::Worker::start(
         shared.clone(),
         rx,
         compiled.groups.clone(),
+        // 启动时的生效规则：updates 通道只在用户碰开关后才有货
+        compiled.rules.clone(),
         update_rx,
+        panel_rx,
     )?;
     let _tap = laterkey_platform_mac::EventTap::start(
         shared.clone(),
@@ -55,7 +62,7 @@ pub fn run() -> Result<(), String> {
         },
     )?;
 
-    run_event_loop(toggles, update_tx, base_config, shared)
+    run_event_loop(toggles, update_tx, base_config, shared, panel_tx)
 }
 
 fn run_event_loop(
@@ -63,6 +70,7 @@ fn run_event_loop(
     update_tx: Sender<(Rules, GroupTable)>,
     base_config: Config,
     shared: Arc<laterkey_platform_mac::Shared>,
+    panel_tx: Sender<PanelCommand>,
 ) -> Result<(), String> {
     let (menu_tx, menu_rx) = mpsc::channel::<tray_icon::menu::MenuEvent>();
     tray_icon::menu::MenuEvent::set_event_handler(Some(move |ev| {
@@ -88,7 +96,7 @@ fn run_event_loop(
         ..Default::default()
     };
 
-    let app = TrayApp::new(toggles, update_tx, base_config, shared, menu_rx);
+    let app = TrayApp::new(toggles, update_tx, base_config, shared, menu_rx, panel_tx);
     eframe::run_native(
         "LaterKey",
         options,
@@ -110,10 +118,14 @@ struct TrayApp {
     base_config: Config,
     shared: Arc<laterkey_platform_mac::Shared>,
     menu_rx: Receiver<tray_icon::menu::MenuEvent>,
+    panel_tx: Sender<PanelCommand>,
     tray: Option<Tray>,
     /// 已明确要退出（托盘「退出」或后台 stop），下一次 close_requested 不再拦截。
     quit_requested: bool,
     inner: Option<SettingsApp>,
+    /// Win+V 呼出面板：worker 推 panel_seq，这里轮询。None = 面板关着。
+    panel: Option<Panel>,
+    panel_seq_seen: u64,
 }
 
 impl TrayApp {
@@ -123,6 +135,7 @@ impl TrayApp {
         base_config: Config,
         shared: Arc<laterkey_platform_mac::Shared>,
         menu_rx: Receiver<tray_icon::menu::MenuEvent>,
+        panel_tx: Sender<PanelCommand>,
     ) -> Self {
         Self {
             toggles,
@@ -130,9 +143,12 @@ impl TrayApp {
             base_config,
             shared,
             menu_rx,
+            panel_tx,
             tray: None,
             quit_requested: false,
             inner: None,
+            panel: None,
+            panel_seq_seen: 0,
         }
     }
 
@@ -198,6 +214,36 @@ impl eframe::App for TrayApp {
         if self.shared.stop.load(std::sync::atomic::Ordering::SeqCst) {
             self.quit_requested = true;
             ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+        }
+
+        // Win+V 呼出剪贴板面板：worker 推过序号且面板没开着才开。
+        // 面板开着时再按 Win+V 到这里，序号被消费掉、不开第二次。
+        let seq = self
+            .shared
+            .panel_seq
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if seq != self.panel_seq_seen {
+            self.panel_seq_seen = seq;
+            if self.panel.is_none() {
+                // 先快照前台 pid：面板一激活，前台就变成 LaterKey 自己了。
+                // worker 贴回时要的就是这个快照
+                let pid = self
+                    .shared
+                    .front_pid
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                self.shared
+                    .panel_target_pid
+                    .store(pid, std::sync::atomic::Ordering::Relaxed);
+                self.panel = Some(Panel::new(self.panel_tx.clone(), self.shared.clone()));
+                ctx.request_repaint();
+            }
+        }
+        // 开着就每帧注册一次视口；回调请求关闭后停注册，egui 随即收走窗口
+        if let Some(panel) = &self.panel {
+            panel.show(ctx);
+            if panel.close_requested() {
+                self.panel = None;
+            }
         }
 
         // 菜单事件要能被及时看到：低频轮询（窗口隐藏时也保持）

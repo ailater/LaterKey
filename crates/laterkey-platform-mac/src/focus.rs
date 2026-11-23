@@ -7,7 +7,10 @@ use std::os::raw::c_char;
 use std::path::{Path, PathBuf};
 
 use objc2::rc::autoreleasepool;
-use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication, NSWorkspace};
+use objc2_app_kit::{
+    NSApplicationActivationOptions, NSApplicationActivationPolicy, NSRunningApplication,
+    NSWorkspace,
+};
 use objc2_foundation::NSString;
 
 use super::cf::{self, Cf};
@@ -75,6 +78,38 @@ pub fn frontmost() -> Option<FrontApp> {
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
         })
+    })
+}
+
+/// 按 pid 查运行中应用的 bundle id：剪贴板采集给「拷贝来源」归属用。
+/// 查不到（进程刚退、无 bundle）返回 None，调用方落空字符串。
+pub fn bundle_id_for_pid(pid: i32) -> Option<String> {
+    autoreleasepool(|_pool| {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?
+            .bundleIdentifier()
+            .map(|s| s.to_string())
+    })
+}
+
+/// 按 pid 激活应用：贴回历史前把前台还给目标窗口用。
+pub fn activate_pid(pid: i32) -> bool {
+    autoreleasepool(|_pool| {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(pid).is_some_and(|app| {
+            // macOS 14 把 IgnoringOtherApps 标记为 deprecated，但协作激活模式下
+            // 不带它，从 Accessory 应用里抢前台会被当前应用拒绝
+            #[allow(deprecated)]
+            app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps)
+        })
+    })
+}
+
+/// 按 bundle id 查显示名（剪贴板面板的「来源」列）。应用没在跑就返回 None。
+pub fn app_name_for_bundle(bundle: &str) -> Option<String> {
+    autoreleasepool(|_pool| {
+        NSRunningApplication::runningApplicationsWithBundleIdentifier(&NSString::from_str(bundle))
+            .firstObject()?
+            .localizedName()
+            .map(|s| s.to_string())
     })
 }
 

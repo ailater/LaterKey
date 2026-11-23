@@ -32,8 +32,8 @@ impl Default for Toggles {
             alt_tab: true,
             ctrl_arrows: true,
             win_key_lock: true,
-            // 剪贴板历史面板尚未实现，开了会吞掉 ⌘V
-            win_key_clipboard: false,
+            // Win+V 剪贴板历史面板默认开；只拦裸 Win+V，⌘V 粘贴不受影响
+            win_key_clipboard: true,
             task_manager: true,
             dock_click_minimize: true,
             finder_f2: true,
@@ -136,8 +136,10 @@ mod tests {
     }
 
     #[test]
-    fn clipboard_stays_off_by_default() {
-        assert!(!Toggles::default().win_key_clipboard);
+    fn clipboard_on_by_default() {
+        assert!(Toggles::default().win_key_clipboard);
+        let compiled = apply(&Config::default(), &Toggles::default()).unwrap();
+        assert!(compiled.rules.win_key_clipboard);
     }
 
     #[test]

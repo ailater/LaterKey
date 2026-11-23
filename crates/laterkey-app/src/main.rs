@@ -15,6 +15,8 @@ fn main() {
 #[cfg(target_os = "macos")]
 mod app;
 #[cfg(target_os = "macos")]
+mod clipboard_panel;
+#[cfg(target_os = "macos")]
 mod daemon;
 #[cfg(target_os = "macos")]
 mod duration;

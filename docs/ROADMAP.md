@@ -49,7 +49,7 @@
 
 ## P2 · 剪贴板历史（Win+V）
 
-原始需求项。`NSPasteboard.changeCount` 轮询采集 → 历史存储 → 面板选择 → 写回剪贴板并模拟粘贴。注意密码管理器标记的敏感内容（`org.nspasteboard.ConcealedType` 等）不记录。面板拿到焦点后中文输入法才能打字搜索；贴回时要等原应用重新激活再发 ⌘V。
+- [x] 已实现（2026-11-23）：worker 50ms 轮询 `NSPasteboard.changeCount` 采集，类型表先拦密码管理器标记（`org.nspasteboard.ConcealedType` / `TransientType`）再读字符串；core 环形历史（100 条、同内容去重置顶、单条 1 MiB 拒收）；egui 第二视口面板（搜索、↑↓/鼠标选择、清空，标题栏保留否则成不了 key window）；贴回经 worker 状态机完成——写回剪贴板 → 激活打开面板前快照的原应用 → 每轮轮询等前台切回（1.5s 超时放弃）→ 合成 ⌘V。默认开启，⌘V 粘贴不受影响（有守卫测试）。**缺口**：历史仅存内存，重启即清，落盘存储未做（serde 形状已备好）。待真机验证：面板自动聚焦、贴回激活时序。
 
 ## P3 · 分发与体验
 

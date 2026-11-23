@@ -151,9 +151,8 @@ impl Default for Rules {
             alt_tab: true,
             ctrl_arrows: true,
             win_key_lock: true,
-            // 剪贴板历史面板还没做。开启后 ⌘V 会被吞掉，在面板落地前必须保持关闭，
-            // 否则用户连粘贴都没了。
-            win_key_clipboard: false,
+            // Win+V 弹剪贴板历史面板；⌘V（Ctrl+V 改写来的）不受影响
+            win_key_clipboard: true,
             task_manager: true,
             substitutes: Vec::new(),
         }
@@ -1221,20 +1220,22 @@ mod tests {
     }
 
     #[test]
-    fn win_v_is_paste_by_default_and_history_when_enabled() {
+    fn win_v_is_history_by_default_and_paste_when_disabled() {
+        // 默认开：裸 ⌘V（物理 Win+V）弹剪贴板历史
         let mut r = Remapper::new(Rules::default());
         assert_eq!(
             r.on_input(Input::key_down(V, CMD_L), &plain()),
-            Decision::Keep
+            Decision::Action(Action::ClipboardHistory)
         );
 
+        // 关掉开关：恢复原样，⌘V 就是粘贴
         let mut r = Remapper::new(Rules {
-            win_key_clipboard: true,
+            win_key_clipboard: false,
             ..Default::default()
         });
         assert_eq!(
             r.on_input(Input::key_down(V, CMD_L), &plain()),
-            Decision::Action(Action::ClipboardHistory)
+            Decision::Keep
         );
     }
 

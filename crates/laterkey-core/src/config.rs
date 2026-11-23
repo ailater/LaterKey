@@ -18,7 +18,7 @@ cmd_as_ctrl = true            # 物理 Win(⌘) 当作 ⌃：终端里 Win+C = C
 alt_tab = true                # 左 Alt+Tab 切换应用
 ctrl_arrows = true            # Ctrl+←/→/⌫ 按词跳转/删除（⌥）
 win_key_lock = true           # Win(⌘)+L 锁屏
-win_key_clipboard = false     # Win(⌘)+V 剪贴板历史：面板未实现，保持 false
+win_key_clipboard = true      # Win(⌘)+V 剪贴板历史面板：搜索历史、选中贴回
 task_manager = true           # Ctrl+Alt+Del 或 Ctrl+Esc 呼出强制退出窗口
 dock_click_minimize = true    # 再点一次前台应用的 Dock 图标 → 最小化
 
@@ -96,8 +96,8 @@ impl Default for RemapConfig {
             alt_tab: true,
             ctrl_arrows: true,
             win_key_lock: true,
-            // 面板没做之前不能吞 ⌘V，否则用户连粘贴都没了
-            win_key_clipboard: false,
+            // Win+V 剪贴板历史面板默认开；只拦裸 Win+V，⌘V 粘贴不受影响
+            win_key_clipboard: true,
             task_manager: true,
             dock_click_minimize: true,
         }
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(compiled.groups.lookup("com.unknown.app"), 0);
         // F2 → 回车、F5 → ⌘R 是用户点名要的，默认就有
         assert_eq!(compiled.rules.substitutes.len(), 2);
-        assert!(!compiled.rules.win_key_clipboard, "面板未实现前不能吞 ⌘V");
+        assert!(compiled.rules.win_key_clipboard, "Win+V 剪贴板面板默认开");
     }
 
     #[test]

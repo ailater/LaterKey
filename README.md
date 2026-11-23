@@ -42,6 +42,7 @@ brew install --cask crazykun/ailater/laterkey
 | 按词删除 | Ctrl+Backspace | ⌥⌫ |
 | 切换输入法 | Ctrl+Space 或 Win+Space | ⌃Space |
 | 锁屏 | Win+L | 立即锁定屏幕 |
+| 剪贴板历史 | Win+V | 弹出历史面板，↑↓ 或鼠标选中即贴回 |
 | 重命名文件（访达里） | F2 | 回车进入重命名 |
 | 刷新页面（浏览器里） | F5 | ⌘R |
 
@@ -73,10 +74,9 @@ brew install --cask crazykun/ailater/laterkey
 
 ## 已知限制
 
-- Win+V 剪贴板历史尚未实现（开关默认关闭，勿开）；
 - Dock 开了图标放大或自动隐藏时，「再点最小化」未经验证；
 - 终端组/浏览器组的应用列表目前需手改 `~/.config/laterkey/config.toml`；
-- 更多计划见 [docs/ROADMAP.md](docs/ROADMAP.md)（快捷键速览、剪贴板历史等）。
+- 更多计划见 [docs/ROADMAP.md](docs/ROADMAP.md)（快捷键速览等）。
 
 ## License
 

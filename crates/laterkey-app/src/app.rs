@@ -120,12 +120,23 @@ fn run_remap(
 
     let (tx, rx) = mpsc::sync_channel(64);
     let shared = Arc::new(mac::Shared::new(tx, verbose));
-    // CLI 模式下规则不热更新：通道的发送端立刻丢弃，后台线程的 try_recv 永远为空
+    // CLI 模式下规则不热更新、也没有剪贴板面板：两个通道的发送端立刻丢弃。
+    // 没有面板就别拦 Win+V——拦了等于白丢一个粘贴键
+    let mut rules = compiled.rules.clone();
+    rules.win_key_clipboard = false;
     let (_update_tx, update_rx) = mpsc::channel();
-    let worker = mac::Worker::start(shared.clone(), rx, group_table, update_rx)?;
+    let (_panel_tx, panel_rx) = mpsc::channel();
+    let worker = mac::Worker::start(
+        shared.clone(),
+        rx,
+        group_table,
+        rules.clone(),
+        update_rx,
+        panel_rx,
+    )?;
     let tap = mac::EventTap::start(
         shared.clone(),
-        Remapper::new(compiled.rules.clone()),
+        Remapper::new(rules.clone()),
         mac::TapOptions {
             keys: matches!(only, Only::All | Only::Keys),
             dock: matches!(only, Only::All | Only::Dock) && compiled.dock_click_minimize,
@@ -142,7 +153,7 @@ fn run_remap(
         }
     );
     if matches!(only, Only::All | Only::Keys) {
-        for (name, on) in key_rules(&compiled.rules) {
+        for (name, on) in key_rules(&rules) {
             eprintln!("  {} {name}", on_off(on));
         }
         for sub in &compiled.rules.substitutes {

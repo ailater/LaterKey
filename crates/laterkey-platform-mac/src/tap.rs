@@ -15,7 +15,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use laterkey_core::{Action, Chord, Decision, Env, Input, Kind, Remapper, Rules};
+use laterkey_core::{Action, Chord, ClipboardEntry, Decision, Env, Input, Kind, Remapper, Rules};
 
 use super::cf::Cf;
 use super::dock::{self, DockDecision, Tile};
@@ -103,6 +103,13 @@ pub struct Shared {
     pub started: Instant,
     /// 生效中的规则。后台线程写（界面改了开关），拦截线程在事件之间读。
     pub rules: RwLock<Rules>,
+    /// 剪贴板历史快照：worker 线程写，界面（面板）读。tiles 同款模式。
+    /// 仅内存，退出即清；落盘存储是 ROADMAP P2 的待办项。
+    history: RwLock<Arc<[ClipboardEntry]>>,
+    /// Win+V 呼出面板的信号：worker 收到动作 +1，GUI 轮询到变化就弹面板。
+    pub panel_seq: AtomicU64,
+    /// 打开面板那一刻的前台应用 pid（GUI 快照），贴回的目标窗口。
+    pub panel_target_pid: AtomicI32,
     /// 规则换过之后，拦截线程要把状态机重置一次（避免沿用旧规则的状态）
     pub tap_needs_reset: AtomicBool,
     tiles: RwLock<Arc<[Tile]>>,
@@ -123,6 +130,9 @@ impl Shared {
             started: Instant::now(),
             tiles: RwLock::new(Arc::from(Vec::new())),
             rules: RwLock::new(Rules::default()),
+            history: RwLock::new(Arc::from(Vec::new())),
+            panel_seq: AtomicU64::new(0),
+            panel_target_pid: AtomicI32::new(0),
             tap_needs_reset: AtomicBool::new(false),
             jobs,
             port: AtomicPtr::new(null_mut()),
@@ -136,6 +146,19 @@ impl Shared {
 
     pub fn set_tiles(&self, tiles: Vec<Tile>) {
         *self.tiles.write().unwrap_or_else(|p| p.into_inner()) = tiles.into();
+    }
+
+    /// 剪贴板历史快照（从新到旧）。
+    pub fn history(&self) -> Arc<[ClipboardEntry]> {
+        self.history
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// worker 采到新内容（或清空）后发布快照。
+    pub fn set_history(&self, entries: Vec<ClipboardEntry>) {
+        *self.history.write().unwrap_or_else(|p| p.into_inner()) = entries.into();
     }
 
     /// 非阻塞投递：队列满了就丢（宁可少执行一次动作，也不能卡住回调）。

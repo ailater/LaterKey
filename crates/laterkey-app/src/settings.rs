@@ -8,17 +8,17 @@ use egui::{Color32, RichText, Vec2};
 
 use crate::toggles::Toggles;
 
-// Tokyo Night 调色板
-const BG: Color32 = Color32::from_rgb(0x16, 0x16, 0x1e);
-const CARD: Color32 = Color32::from_rgb(0x1f, 0x23, 0x35);
-const BORDER: Color32 = Color32::from_rgb(0x29, 0x2e, 0x42);
-const TEXT: Color32 = Color32::from_rgb(0xc0, 0xca, 0xf5);
-const MUTED: Color32 = Color32::from_rgb(0x56, 0x5f, 0x89);
-const DESC: Color32 = Color32::from_rgb(0x8a, 0x92, 0xb2);
-const ACCENT: Color32 = Color32::from_rgb(0x7a, 0xa2, 0xf7);
-const GREEN: Color32 = Color32::from_rgb(0x9e, 0xce, 0x6a);
-const ORANGE: Color32 = Color32::from_rgb(0xe0, 0xaf, 0x68);
-const SWITCH_OFF: Color32 = Color32::from_rgb(0x3b, 0x42, 0x61);
+// Tokyo Night 调色板（剪贴板面板也用，见 clipboard_panel.rs）
+pub(crate) const BG: Color32 = Color32::from_rgb(0x16, 0x16, 0x1e);
+pub(crate) const CARD: Color32 = Color32::from_rgb(0x1f, 0x23, 0x35);
+pub(crate) const BORDER: Color32 = Color32::from_rgb(0x29, 0x2e, 0x42);
+pub(crate) const TEXT: Color32 = Color32::from_rgb(0xc0, 0xca, 0xf5);
+pub(crate) const MUTED: Color32 = Color32::from_rgb(0x56, 0x5f, 0x89);
+pub(crate) const DESC: Color32 = Color32::from_rgb(0x8a, 0x92, 0xb2);
+pub(crate) const ACCENT: Color32 = Color32::from_rgb(0x7a, 0xa2, 0xf7);
+pub(crate) const GREEN: Color32 = Color32::from_rgb(0x9e, 0xce, 0x6a);
+pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xe0, 0xaf, 0x68);
+pub(crate) const SWITCH_OFF: Color32 = Color32::from_rgb(0x3b, 0x42, 0x61);
 
 /// 应用整体主题（创建时调用一次）。
 pub fn apply_theme(ctx: &egui::Context) {
@@ -312,7 +312,7 @@ impl SettingsApp {
                 changed |= row(
                     ui,
                     "Win+V 剪贴板历史",
-                    "尚未实现，先别打开",
+                    "Win+V 弹出历史面板，搜索后选中即贴回（⌘V 粘贴不受影响）",
                     &mut t.win_key_clipboard,
                 );
                 changed |= row(
