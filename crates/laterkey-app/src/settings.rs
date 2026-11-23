@@ -305,7 +305,7 @@ impl SettingsApp {
                 changed |= row(
                     ui,
                     "按词跳转与删除",
-                    "Ctrl+←/→ 按词移动，Ctrl+⌫ 按词删除",
+                    "Ctrl+←/→ 按词移动，Ctrl+退格 按词删除",
                     &mut t.ctrl_arrows,
                 );
                 changed |= row(ui, "Win+L 锁屏", "立即锁定屏幕", &mut t.win_key_lock);
