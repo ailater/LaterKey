@@ -509,7 +509,7 @@ fn keys_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
         card(ui, "按键映射", |ui| {
             *changed |= row(
                 ui,
-                "Ctrl 当作 ⌘",
+                "Ctrl 当作 Command",
                 "Ctrl+C/V 复制粘贴；Ctrl+点击跳定义",
                 &mut t.ctrl_as_cmd,
             );
@@ -522,7 +522,7 @@ fn keys_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
             *changed |= row(
                 ui,
                 "Alt+Tab 切换应用",
-                "左 Alt+Tab，对应系统的 ⌘Tab",
+                "左 Alt+Tab，对应系统的 Command+Tab",
                 &mut t.alt_tab,
             );
             *changed |= row(
@@ -535,7 +535,7 @@ fn keys_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
             *changed |= row(
                 ui,
                 "Win+V 剪贴板历史",
-                "Win+V 弹出历史面板，文本图片都收，选中即贴回（⌘V 粘贴不受影响）",
+                "Win+V 弹出历史面板，文本图片都收，选中即贴回（Command+V 粘贴不受影响）",
                 &mut t.win_key_clipboard,
             );
             *changed |= row(
@@ -560,7 +560,7 @@ fn apps_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
             *changed |= row(
                 ui,
                 "浏览器里 F5 刷新",
-                "F5 当作 ⌘R，仅浏览器前台时",
+                "F5 当作 Command+R，仅浏览器前台时",
                 &mut t.browser_f5,
             );
         });

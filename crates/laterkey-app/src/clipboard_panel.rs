@@ -330,7 +330,7 @@ impl Panel {
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new(format!(
-                            "{} 条 · ↑↓ 选择 · ⏎ 贴回 · Esc 关闭",
+                            "{} 条 · ↑↓ 选择 · 回车 贴回 · Esc 关闭",
                             st.filtered.len()
                         ))
                         .size(11.0)
