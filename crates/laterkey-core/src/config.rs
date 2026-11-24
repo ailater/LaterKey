@@ -16,7 +16,7 @@ pub const EXAMPLE: &str = r#"
 ctrl_as_cmd = true            # 物理 Ctrl 当作 ⌘：Ctrl+C/V 复制粘贴（terminals 组里保持 ⌃）
 cmd_as_ctrl = true            # 物理 Win(⌘) 当作 ⌃：终端里 Win+C = Ctrl+C 中断
 alt_tab = true                # 左 Alt+Tab 切换应用
-ctrl_arrows = true            # Ctrl+←/→/⌫ 按词跳转/删除（⌥）
+ctrl_arrows = true            # Ctrl+←/→/退格 按词跳转/删除（⌥）
 win_key_lock = true           # Win(⌘)+L 锁屏
 win_key_clipboard = true      # Win(⌘)+V 剪贴板历史面板：搜索历史、选中贴回
 task_manager = true           # Ctrl+Alt+Del 或 Ctrl+Esc 呼出强制退出窗口

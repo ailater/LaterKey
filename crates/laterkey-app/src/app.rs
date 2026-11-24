@@ -389,7 +389,7 @@ fn key_rules(rules: &Rules) -> Vec<(&'static str, bool)> {
             rules.cmd_as_ctrl,
         ),
         ("左 Alt+Tab 切换应用", rules.alt_tab),
-        ("Ctrl+←/→/⌫ 按词跳转/删除（⌥）", rules.ctrl_arrows),
+        ("Ctrl+←/→/退格 按词跳转/删除（⌥）", rules.ctrl_arrows),
         ("Win(⌘)+L 锁屏", rules.win_key_lock),
         ("Win(⌘)+V 剪贴板历史", rules.win_key_clipboard),
     ]

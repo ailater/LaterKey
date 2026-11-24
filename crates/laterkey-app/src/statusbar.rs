@@ -19,7 +19,7 @@ const ITEMS: &[(&str, &str)] = &[
     ("ctrl_as_cmd", "Ctrl 当作 ⌘（复制粘贴）"),
     ("cmd_as_ctrl", "Win 当作 ⌃（终端中断）"),
     ("alt_tab", "Alt+Tab 切换应用"),
-    ("ctrl_arrows", "Ctrl+←/→/⌫ 按词跳转"),
+    ("ctrl_arrows", "Ctrl+←/→/退格 按词跳转"),
     ("win_key_lock", "Win+L 锁屏"),
     ("win_key_clipboard", "Win+V 剪贴板历史"),
     ("task_manager", "Ctrl+Alt+Del 任务管理器"),

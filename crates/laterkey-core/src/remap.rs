@@ -132,7 +132,7 @@ pub struct Rules {
     pub cmd_as_ctrl: bool,
     /// 左 Alt + Tab 切换应用
     pub alt_tab: bool,
-    /// Ctrl + ←/→/⌫ 按词跳转/删除（⌥）
+    /// Ctrl + ←/→/退格 按词跳转/删除（⌥）
     pub ctrl_arrows: bool,
     /// Win(⌘) + L 锁屏
     pub win_key_lock: bool,
