@@ -309,17 +309,6 @@ fn outline_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ))
 }
 
-/// 轻量小按钮：细描边 + 小 padding + 11.5pt，给「配置目录」这类辅助入口用。
-/// 标准按钮 13pt + 14×7 padding 与版本号小字放一起会凸出一块，量级不搭。
-fn small_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(label).size(11.5).color(DESC))
-            .fill(CARD)
-            .stroke(egui::Stroke::new(1.0, BORDER))
-            .corner_radius(egui::CornerRadius::same(6)),
-    )
-}
-
 // ---------------------------------------------------------------- App
 
 pub struct SettingsApp {
@@ -332,6 +321,8 @@ pub struct SettingsApp {
     jump_target: Option<Tab>,
     /// 「重新检测」按钮的最近一次结果（显示在按钮旁）
     perm_note: Option<String>,
+    /// 开机自启开关的最近一次操作结果
+    auto_start_note: Option<String>,
 }
 
 impl SettingsApp {
@@ -347,6 +338,7 @@ impl SettingsApp {
             active_tab: Tab::default(),
             jump_target: None,
             perm_note: None,
+            auto_start_note: None,
         }
     }
 
@@ -378,6 +370,7 @@ impl eframe::App for SettingsApp {
             .clone();
         let mut changed = false;
         let mut perm_note = self.perm_note.clone();
+        let mut auto_start_note = self.auto_start_note.clone();
 
         // 左侧导航：只做「当前分区」指示 + 点击跳转（scroll-spy 联动见下方）。
         // 与窗口底同色（融入页框），唯一的色块是右侧内容卡片。
@@ -448,7 +441,7 @@ impl eframe::App for SettingsApp {
                                 Tab::Keys => keys_section(ui, &mut toggles, &mut changed),
                                 Tab::Apps => apps_section(ui, &mut toggles, &mut changed),
                                 Tab::Mouse => mouse_section(ui, &mut toggles, &mut changed),
-                                Tab::About => about_section(ui),
+                                Tab::About => about_section(ui, &mut auto_start_note),
                             }
                         }
                     });
@@ -469,6 +462,7 @@ impl eframe::App for SettingsApp {
         self.jump_target = jump;
         self.active_tab = active_tab;
         self.perm_note = perm_note;
+        self.auto_start_note = auto_start_note;
         if changed {
             *self.toggles.write().unwrap_or_else(|p| p.into_inner()) = toggles;
             self.apply();
@@ -591,7 +585,34 @@ fn mouse_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
     });
 }
 
-fn about_section(ui: &mut egui::Ui) {
+fn about_section(ui: &mut egui::Ui, auto_start_note: &mut Option<String>) {
+    // 开机自启不是按键规则，不进 Toggles——状态直接读 LaunchAgent plist。
+    // 只写 plist 不立即 bootstrap：当前 GUI 持有实例锁，拉起第二个实例会
+    // 抢锁失败并被 KeepAlive 反复重启；下次登录自然生效。
+    card(ui, "开机自启", |ui| {
+        let mut on = crate::daemon::auto_start_enabled();
+        if row(
+            ui,
+            "登录时自动启动",
+            "开机后自动驻留菜单栏。关闭时若当前实例由 LaunchAgent 托管，它会一同退出",
+            &mut on,
+        ) {
+            let result = if on {
+                crate::daemon::enable_auto_start()
+            } else {
+                crate::daemon::disable_auto_start()
+            };
+            *auto_start_note = Some(match result {
+                Ok(msg) => msg,
+                Err(err) => format!("设置失败：{err}"),
+            });
+        }
+        if let Some(note) = auto_start_note {
+            ui.add_space(2.0);
+            ui.label(RichText::new(note.as_str()).size(11.0).color(DESC));
+        }
+    });
+
     card(ui, "关于", |ui| {
         ui.vertical(|ui| {
             ui.label(RichText::new("LaterKey").size(15.0).color(TEXT).strong());
@@ -607,7 +628,7 @@ fn about_section(ui: &mut egui::Ui) {
                     .color(MUTED),
             );
             ui.add_space(6.0);
-            if small_button(ui, "打开配置目录").clicked() {
+            if outline_button(ui, "打开配置目录").clicked() {
                 if let Some(path) = crate::toggles::path() {
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);

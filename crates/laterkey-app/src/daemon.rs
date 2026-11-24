@@ -70,22 +70,14 @@ pub fn plist(bin: &std::path::Path) -> String {
     )
 }
 
-/// 安装：复制二进制、写 plist、加载。已加载时先卸掉再装（幂等）。
-pub fn install() -> Result<String, String> {
-    let log = log_dir();
-    std::fs::create_dir_all(&log).map_err(|e| format!("创建 {} 失败：{e}", log.display()))?;
-    std::fs::create_dir_all(agent_dir()).map_err(|e| format!("创建 LaunchAgents 目录失败：{e}"))?;
-
-    // 常驻目标：优先 .app 本体——launchd 不继承任何应用的 TCC 授权，授权主体是
-    // /Applications/LaterKey.app（自签名证书身份，跨版本升级不失效）。复制一份
-    // 裸二进制副本会脱离这个身份，跑起来还是没权限。
-    let dest: PathBuf;
-    let copied: bool;
+/// 常驻目标：优先 .app 本体——launchd 不继承任何应用的 TCC 授权，授权主体是
+/// /Applications/LaterKey.app（自签名证书身份，跨版本升级不失效）。复制一份
+/// 裸二进制副本会脱离这个身份，跑起来还是没权限。
+///
+/// 返回（目标路径, 是否为开发态副本）。
+fn launch_target() -> Result<(PathBuf, bool), String> {
     match app_binary() {
-        Some(app_bin) => {
-            dest = app_bin;
-            copied = false;
-        }
+        Some(app_bin) => Ok((app_bin, false)),
         None => {
             // 开发态（cargo 构建的裸二进制）：复制到固定位置
             let source = std::env::current_exe().map_err(|e| format!("找不到自己的位置：{e}"))?;
@@ -97,19 +89,67 @@ pub fn install() -> Result<String, String> {
                 let _ = std::fs::remove_file(&d);
             }
             std::fs::copy(&source, &d).map_err(|e| format!("复制二进制失败：{e}"))?;
-            dest = d;
-            copied = true;
+            Ok((d, true))
         }
     }
+}
+
+fn prepare_dirs() -> Result<(), String> {
+    let log = log_dir();
+    std::fs::create_dir_all(&log).map_err(|e| format!("创建 {} 失败：{e}", log.display()))?;
+    std::fs::create_dir_all(agent_dir()).map_err(|e| format!("创建 LaunchAgents 目录失败：{e}"))?;
+    Ok(())
+}
+
+fn plist_path() -> PathBuf {
+    agent_dir().join(format!("{LABEL}.plist"))
+}
+
+/// 开机自启是否已注册（plist 存在即视为开启）。
+pub fn auto_start_enabled() -> bool {
+    plist_path().exists()
+}
+
+/// 只注册开机自启（写 plist），不立即 bootstrap。供设置面板勾选时用：
+/// 当前 GUI 进程持有实例锁，若立刻 bootstrap，launchd 拉起的实例会抢锁失败
+/// 并被 KeepAlive 反复重启。plist 写好后下次登录自然生效。
+pub fn enable_auto_start() -> Result<String, String> {
+    prepare_dirs()?;
+    let (dest, copied) = launch_target()?;
+    let path = plist_path();
+    std::fs::write(&path, plist(&dest)).map_err(|e| format!("写 plist 失败：{e}"))?;
+    Ok(format!(
+        "已开启开机自启，下次登录生效。\n  LaunchAgent {}\n  目标 {}{}",
+        path.display(),
+        dest.display(),
+        if copied { "（开发态副本）" } else { "" },
+    ))
+}
+
+/// 关闭开机自启：卸服务 + 删 plist。若当前实例正由 LaunchAgent 托管，
+/// bootout 会一并结束它——面板文案里已提示。
+pub fn disable_auto_start() -> Result<String, String> {
+    let _ = bootout();
+    let path = plist_path();
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("删除 plist 失败：{e}"))?;
+    }
+    Ok("已关闭开机自启。若当前实例由 LaunchAgent 托管，它会一同退出。".into())
+}
+
+/// 安装：复制二进制、写 plist、加载。已加载时先卸掉再装（幂等）。
+pub fn install() -> Result<String, String> {
+    prepare_dirs()?;
+    let (dest, copied) = launch_target()?;
 
     // 先卸掉旧的 LaunchAgent（幂等），再写 plist、加载
     let _ = bootout();
-    let plist_path = agent_dir().join(format!("{LABEL}.plist"));
-    std::fs::write(&plist_path, plist(&dest)).map_err(|e| format!("写 plist 失败：{e}"))?;
+    let path = plist_path();
+    std::fs::write(&path, plist(&dest)).map_err(|e| format!("写 plist 失败：{e}"))?;
 
     let domain = format!("gui/{}", unsafe { libc::getuid() });
     let out = std::process::Command::new("launchctl")
-        .args(["bootstrap", &domain, &plist_path.to_string_lossy()])
+        .args(["bootstrap", &domain, &path.to_string_lossy()])
         .output()
         .map_err(|e| format!("调不起 launchctl：{e}"))?;
     if !out.status.success() {
@@ -124,8 +164,8 @@ pub fn install() -> Result<String, String> {
         "已安装常驻（裸启动 = 菜单栏托盘）：\n  目标 {}{}\n  LaunchAgent {}\n  日志 {}\n\n登录自动启动，崩溃/被杀后自动拉起（{LABEL}）。\n首次运行需在 系统设置 › 隐私与安全性 › 辅助功能 里授权 LaterKey.app。",
         dest.display(),
         if copied { "（开发态副本）" } else { "" },
-        plist_path.display(),
-        log.display(),
+        path.display(),
+        log_dir().display(),
     ))
 }
 

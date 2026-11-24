@@ -43,7 +43,7 @@ brew install --cask crazykun/ailater/laterkey
 装完两步就能用：
 
 1. **授权**：系统设置 › 隐私与安全性 › 辅助功能 › 添加 LaterKey.app（只需这一次，后续升级不用重新授权）；
-2. **打开 LaterKey.app**：菜单栏出现托盘图标，功能立即生效。想开机自启就执行 `laterkey install`。
+2. **打开 LaterKey.app**：菜单栏出现托盘图标，功能立即生效。想开机自启就在设置面板「关于」里勾选「登录时自动启动」，下次登录生效。
 
 ## 功能对照
 
@@ -89,7 +89,7 @@ brew install --cask crazykun/ailater/laterkey
 
 - **托盘菜单**：逐项开关功能、打开设置面板、查看权限状态、退出；
 - **设置面板**：与托盘同步的开关界面，含权限卡片（辅助功能 / 监听事件的状态、跳转与一键检测）；
-- **常驻自启**：`laterkey install` 注册 LaunchAgent（登录自启、异常退出自动拉起），`laterkey uninstall` 卸载；
+- **开机自启**：设置面板「关于」里勾选「登录时自动启动」（下次登录生效）；命令行 `laterkey install` 可立即装好并拉起常驻，`laterkey uninstall` 卸载；
 - **命令行**：`laterkey run`（前台运行）、`laterkey doctor`（诊断权限与环境）、`laterkey lock`（立即锁屏）。
 
 ## 常见问题
