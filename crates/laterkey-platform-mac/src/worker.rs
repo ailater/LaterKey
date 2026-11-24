@@ -354,13 +354,21 @@ fn handle(shared: &Shared, job: Job) {
             info("呼出剪贴板历史面板");
         }
         Job::Action(laterkey_core::Action::TaskManager) => {
-            // 任务管理器 = macOS 强制退出窗口：合成 ⌘⌥Esc（OWN_TAG 让拦截层放行）
-            let force_quit = laterkey_core::Chord {
-                keycode: laterkey_core::keys::ESCAPE,
-                flags: laterkey_core::flags::COMMAND | laterkey_core::flags::ALTERNATE,
-            };
-            if post::chord(force_quit) {
-                info("已呼出强制退出窗口（⌘⌥Esc）");
+            // 任务管理器 = macOS 强制退出窗口（⌘⌥Esc）。这个 WindowServer 热键
+            // 不认用户态合成的 CGEvent——真机实测：完整修饰键手势序列（含
+            // flagsChanged 类型）弹不出来，同法的 ⌘Space 却能弹 Spotlight，
+            // 是 force quit 热键的注册校验更严。System Events 的 key code 走
+            // 特权注入，等效真实按键，实测本机可弹。子进程在 worker 线程起，
+            // 不进拦截回调。
+            let script = r#"tell application "System Events" to key code 53 using {command down, option down}"#;
+            let ok = std::process::Command::new("osascript")
+                .arg("-e")
+                .arg(script)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok {
+                info("已呼出强制退出窗口");
             } else {
                 info("强制退出窗口呼出失败");
             }
