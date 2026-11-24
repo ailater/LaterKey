@@ -216,26 +216,29 @@ impl eframe::App for TrayApp {
             ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
         }
 
-        // Win+V 呼出剪贴板面板：worker 推过序号且面板没开着才开。
-        // 面板开着时再按 Win+V 到这里，序号被消费掉、不开第二次。
+        // Win+V 是开关（toggle）：面板关着 → 呼出；开着 → 再按一次关闭。
+        // 关闭走 Panel::request_close，与 Esc/失焦同一路径。
         let seq = self
             .shared
             .panel_seq
             .load(std::sync::atomic::Ordering::Relaxed);
         if seq != self.panel_seq_seen {
             self.panel_seq_seen = seq;
-            if self.panel.is_none() {
-                // 先快照前台 pid：面板一激活，前台就变成 LaterKey 自己了。
-                // worker 贴回时要的就是这个快照
-                let pid = self
-                    .shared
-                    .front_pid
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                self.shared
-                    .panel_target_pid
-                    .store(pid, std::sync::atomic::Ordering::Relaxed);
-                self.panel = Some(Panel::new(self.panel_tx.clone(), self.shared.clone()));
-                ctx.request_repaint();
+            match &self.panel {
+                Some(panel) => panel.request_close(),
+                None => {
+                    // 先快照前台 pid：面板一激活，前台就变成 LaterKey 自己了。
+                    // worker 贴回时要的就是这个快照
+                    let pid = self
+                        .shared
+                        .front_pid
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    self.shared
+                        .panel_target_pid
+                        .store(pid, std::sync::atomic::Ordering::Relaxed);
+                    self.panel = Some(Panel::new(self.panel_tx.clone(), self.shared.clone()));
+                    ctx.request_repaint();
+                }
             }
         }
         // 开着就每帧注册一次视口；回调请求关闭后停注册，egui 随即收走窗口

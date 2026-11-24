@@ -99,6 +99,16 @@ impl Panel {
         );
     }
 
+    /// 再按一次 Win+V 的 toggle 关闭：与 Esc/失焦/红点同一条关闭路径，
+    /// TrayApp 下一帧看到 close_requested 就停注册，视口随之销毁。
+    pub fn request_close(&self) {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .close = true;
+    }
+
     /// 回调请求关闭：TrayApp 检查后停注册。
     pub fn close_requested(&self) -> bool {
         self.inner
