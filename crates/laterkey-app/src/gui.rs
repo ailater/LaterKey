@@ -265,6 +265,17 @@ impl eframe::App for TrayApp {
             panel.show(ctx);
             if panel.close_requested() {
                 self.panel = None;
+                // 焦点还给打开面板前的应用：面板激活过 LaterKey，若设置窗口
+                // 之前开过会被一起带到前台；Esc/再按 Win+V 关闭后必须把原应用
+                // 拉回来，否则设置窗口就残留在最前面（贴回路径 worker 也激活
+                // 同一目标，幂等）
+                let pid = self
+                    .shared
+                    .panel_target_pid
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                if pid > 0 {
+                    laterkey_platform_mac::activate_pid(pid);
+                }
             }
         }
 
