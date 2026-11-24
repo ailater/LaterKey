@@ -386,7 +386,11 @@ impl eframe::App for SettingsApp {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 ui.add_space(4.0);
                 ui.label(RichText::new("LaterKey").size(15.0).color(TEXT).strong());
-                ui.label(RichText::new("Windows 键盘习惯").size(11.0).color(MUTED));
+                ui.label(
+                    RichText::new("Mac 上的 Windows 键盘习惯")
+                        .size(11.0)
+                        .color(MUTED),
+                );
                 ui.add_space(10.0);
                 let mut master = toggles.master;
                 if master_row(ui, &mut master).changed() {
@@ -617,7 +621,7 @@ fn about_section(ui: &mut egui::Ui, auto_start_note: &mut Option<String>) {
         ui.vertical(|ui| {
             ui.label(RichText::new("LaterKey").size(15.0).color(TEXT).strong());
             ui.label(
-                RichText::new("让 Windows 布局键盘按 Windows 习惯工作")
+                RichText::new("让 Windows 布局键盘在 Mac 上按 Windows 习惯工作")
                     .size(11.5)
                     .color(DESC),
             );
