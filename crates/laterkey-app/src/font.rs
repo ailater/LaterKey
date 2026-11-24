@@ -27,9 +27,15 @@ pub fn setup(ctx: &egui::Context) {
     }
     let mut fonts = egui::FontDefinitions::default();
     if let Some(bytes) = symbols {
+        // y_offset_factor < 0 上移：补偿 egui 对 ascent 取整后 SF 与 CJK 字体的基线错位
         fonts.font_data.insert(
             "system-symbols".into(),
-            egui::FontData::from_owned(bytes).into(),
+            egui::FontData::from_owned(bytes)
+                .tweak(egui::FontTweak {
+                    y_offset_factor: 0.07,
+                    ..Default::default()
+                })
+                .into(),
         );
     }
     if let Some(bytes) = cjk {
