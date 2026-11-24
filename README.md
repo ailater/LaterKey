@@ -6,7 +6,9 @@
 
 纯用户态实现，不装虚拟 HID 驱动、不用写 JSON 配置。图形界面和终端同时符合 Windows 习惯。
 
-![LaterKey 设置面板](docs/images/settings.png)
+![设置面板：权限与按键映射](docs/images/settings-keys.png)
+
+![设置面板：开机自启与关于](docs/images/settings.png)
 
 ## 为什么是 LaterKey
 
