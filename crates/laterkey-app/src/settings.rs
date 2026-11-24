@@ -594,7 +594,7 @@ fn about_section(ui: &mut egui::Ui, auto_start_note: &mut Option<String>) {
         if row(
             ui,
             "登录时自动启动",
-            "开机后自动驻留菜单栏。关闭时若当前实例由 LaunchAgent 托管，它会一同退出",
+            "开机后自动驻留菜单栏。关闭只影响下次登录，当前实例继续运行",
             &mut on,
         ) {
             let result = if on {

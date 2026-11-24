@@ -126,15 +126,16 @@ pub fn enable_auto_start() -> Result<String, String> {
     ))
 }
 
-/// 关闭开机自启：卸服务 + 删 plist。若当前实例正由 LaunchAgent 托管，
-/// bootout 会一并结束它——面板文案里已提示。
+/// 关闭开机自启：只删 plist，**不 bootout**——bootout 会连带终止当前
+/// 这个由 LaunchAgent 托管的进程（用户感知就是「点一下程序崩了」），而且
+/// 进程死在这里，后面的删 plist 永远执行不到。关闭自启的语义只影响下次
+/// 登录；当前实例继续运行，要退出走托盘「退出」。
 pub fn disable_auto_start() -> Result<String, String> {
-    let _ = bootout();
     let path = plist_path();
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| format!("删除 plist 失败：{e}"))?;
     }
-    Ok("已关闭开机自启。若当前实例由 LaunchAgent 托管，它会一同退出。".into())
+    Ok("已关闭开机自启，下次登录不再自动启动。当前实例继续运行。".into())
 }
 
 /// 安装：复制二进制、写 plist、加载。已加载时先卸掉再装（幂等）。
