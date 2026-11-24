@@ -160,19 +160,70 @@ fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, "")
     });
-    let t = ui.ctx().animate_bool(response.id, *on);
     if ui.is_rect_visible(rect) {
-        let radius = rect.height() / 2.0;
-        let mut bg = SWITCH_OFF.lerp_to_gamma(ACCENT, t);
-        if response.hovered() {
-            bg = bg.lerp_to_gamma(Color32::WHITE, 0.08);
-        }
-        ui.painter().rect_filled(rect, radius, bg);
-        let x = rect.left() + radius + (rect.width() - 2.0 * radius) * t;
-        ui.painter()
-            .circle_filled(egui::pos2(x, rect.center().y), radius - 3.5, Color32::WHITE);
+        draw_switch(ui, response.id, rect, *on, response.hovered());
     }
     response
+}
+
+/// 在给定矩形上画开关（按下状态动画由调用方的 id 驱动）。行内嵌开关与
+/// 独立开关共用这一套绘制，保证圆角/滑块比例在任何尺寸下都一致。
+fn draw_switch(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, on: bool, hovered: bool) {
+    let t = ui.ctx().animate_bool(id, on);
+    let radius = rect.height() / 2.0;
+    let mut bg = SWITCH_OFF.lerp_to_gamma(ACCENT, t);
+    if hovered {
+        bg = bg.lerp_to_gamma(Color32::WHITE, 0.08);
+    }
+    ui.painter().rect_filled(rect, radius, bg);
+    let x = rect.left() + radius + (rect.width() - 2.0 * radius) * t;
+    ui.painter()
+        .circle_filled(egui::pos2(x, rect.center().y), radius - 3.5, Color32::WHITE);
+}
+
+/// 左栏「启用」行：与导航项同高（32px）同字号（13.5），整行可点，右侧小号
+/// 开关。做成与导航一致的节奏——原先「启用」12.5pt 挤在 22px 高的开关旁，
+/// 与 16pt 标题、32px 导航行放一起高矮不一。
+fn master_row(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let (rect, mut resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), egui::Sense::click());
+    if resp.hovered() && !*on {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(8),
+            Color32::from_rgb(0x28, 0x2e, 0x45),
+        );
+    }
+    let fg = if *on { ACCENT } else { TEXT };
+    if *on {
+        // 开着时同样给品牌色指示条，与选中导航项呼应：「启用」也是一项状态
+        ui.painter().rect_filled(
+            egui::Rect::from_center_size(
+                egui::pos2(rect.left() + 2.0, rect.center().y),
+                Vec2::new(3.0, rect.height() * 0.55),
+            ),
+            egui::CornerRadius::same(2),
+            ACCENT,
+        );
+    }
+    ui.painter().text(
+        egui::pos2(rect.left() + 14.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        "启用",
+        FontId::proportional(13.5),
+        fg,
+    );
+    let sw = Vec2::new(36.0, 20.0);
+    let sw_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 8.0 - sw.x / 2.0, rect.center().y),
+        sw,
+    );
+    draw_switch(ui, resp.id.with("sw"), sw_rect, *on, resp.hovered());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    resp
 }
 
 /// 分区卡片：标题左侧一条强调色小竖条 + 圆角面板。扁平风：无描边，
@@ -328,20 +379,16 @@ impl eframe::App for SettingsApp {
                     .inner_margin(egui::Margin::same(10)),
             )
             .show(ui, |ui| {
-                ui.label(RichText::new("LaterKey").size(16.0).color(TEXT).strong());
-                ui.label(RichText::new("Windows 键盘习惯").size(10.5).color(MUTED));
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.add_space(4.0);
+                ui.label(RichText::new("LaterKey").size(15.0).color(TEXT).strong());
+                ui.label(RichText::new("Windows 键盘习惯").size(11.0).color(MUTED));
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("启用").size(12.5).color(DESC));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut master = toggles.master;
-                        if switch(ui, &mut master).changed() {
-                            toggles.master = master;
-                            changed = true;
-                        }
-                    });
-                });
-                ui.add_space(8.0);
+                let mut master = toggles.master;
+                if master_row(ui, &mut master).changed() {
+                    toggles.master = master;
+                    changed = true;
+                }
                 for tab in Tab::ALL {
                     if nav_item(ui, active_tab == tab, tab.label()).clicked() {
                         jump = Some(tab);
@@ -468,7 +515,7 @@ fn keys_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
             );
             *changed |= row(
                 ui,
-                "Win 当作 ⌃",
+                "Win 当作 Ctrl",
                 "Win+C 即终端里的 Ctrl+C（中断）",
                 &mut t.cmd_as_ctrl,
             );
