@@ -11,13 +11,14 @@ const CANDIDATES: &[&str] = &[
     "/System/Library/Fonts/Supplemental/Songti.ttc",
 ];
 
-/// macOS 系统字体（SF NS）：拉丁与苹果符号（⌘ ⌃ ⇧ ⌥ ⌫）都齐全，字形与
-/// 系统一致。排在苹方之前——苹方虽含基本拉丁，但用 SF 渲染更精致，且
-/// 「SF + 苹方」本来就是 macOS 原生组合，混排基线协调。
+/// macOS 系统字体（SF NS）：只作**符号兜底**（⌘ ⌃ ⇧ ⌥ 等 CJK 字体没有的
+/// 字符），不渲染正文拉丁。曾让 SF 渲染拉丁追求「原生观感」，但 egui 对每
+/// 字体 ascent 取整的错位随字号变化（14pt 与 11.5pt 错位方向都不同），
+/// FontTweak 单一补偿值无法全字号对齐——中英文混排必须同一字体渲染。
 const SYMBOL_FONT: &str = "/System/Library/Fonts/SFNS.ttf";
 
 /// 把系统字体挂成 egui 的字体族（内置字体留作缺字 fallback）。
-/// 顺序：SF（拉丁/苹果符号）→ 苹方（中文）→ 内置兜底。
+/// 顺序：CJK（中文与拉丁正文同一字体，基线天然一致）→ SF（仅符号）→ 内置兜底。
 /// 找不到任何字体就不动——退回 egui 默认字体（中文会显示为方框）。
 pub fn setup(ctx: &egui::Context) {
     let symbols = std::fs::read(SYMBOL_FONT).ok();
@@ -27,15 +28,9 @@ pub fn setup(ctx: &egui::Context) {
     }
     let mut fonts = egui::FontDefinitions::default();
     if let Some(bytes) = symbols {
-        // y_offset_factor < 0 上移：补偿 egui 对 ascent 取整后 SF 与 CJK 字体的基线错位
         fonts.font_data.insert(
             "system-symbols".into(),
-            egui::FontData::from_owned(bytes)
-                .tweak(egui::FontTweak {
-                    y_offset_factor: 0.07,
-                    ..Default::default()
-                })
-                .into(),
+            egui::FontData::from_owned(bytes).into(),
         );
     }
     if let Some(bytes) = cjk {
@@ -48,7 +43,7 @@ pub fn setup(ctx: &egui::Context) {
         let list = fonts.families.entry(family).or_default();
         // 插入顺序决定 fallback 次序：先 SF 后苹方（push 到尾部，位于
         // 内置字体之前还要再调——直接重建整个列表最直白）
-        *list = ["system-symbols", "system-cjk"]
+        *list = ["system-cjk", "system-symbols"]
             .iter()
             .filter(|name| fonts.font_data.contains_key(**name))
             .map(|name| (*name).to_string())
