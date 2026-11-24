@@ -13,7 +13,7 @@ use crate::remap::{groups, Chord, Rules, Substitute};
 /// 并且编译结果与不带配置文件时相同。
 pub const EXAMPLE: &str = r#"
 [remap]
-ctrl_as_cmd = true            # 物理 Ctrl 当作 ⌘：Ctrl+C/V 复制粘贴（terminals 组里保持 ⌃）
+ctrl_as_cmd = true            # 物理 Ctrl 当作 ⌘：Ctrl+C/V 复制粘贴（终端里也一样，中断用 Win+C）
 cmd_as_ctrl = true            # 物理 Win(⌘) 当作 ⌃：终端里 Win+C = Ctrl+C 中断
 alt_tab = true                # 左 Alt+Tab 切换应用
 ctrl_arrows = true            # Ctrl+←/→/退格 按词跳转/删除（⌥）

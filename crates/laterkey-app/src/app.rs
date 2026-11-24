@@ -381,7 +381,7 @@ fn default_config_path() -> Option<PathBuf> {
 fn key_rules(rules: &Rules) -> Vec<(&'static str, bool)> {
     vec![
         (
-            "物理 Ctrl 当作 ⌘（terminals 组里保持 ⌃）",
+            "物理 Ctrl 当作 ⌘（含终端，中断用 Win+C）",
             rules.ctrl_as_cmd,
         ),
         (

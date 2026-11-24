@@ -62,7 +62,8 @@ impl Input {
 
 /// 应用组：前台应用命中的配置分组，一组一位。
 pub mod groups {
-    /// 终端：Ctrl 组合保持原义（Ctrl+C 仍是中断）
+    /// 终端分组：仅作 [[substitute]] 的 when 限定等用途。Ctrl 不再豁免——
+    /// 终端里 Ctrl+C/V 同样是复制粘贴（⌘），中断与控制键由 Win 承担（⌃）
     pub const TERMINAL: u64 = 1 << 0;
     /// 浏览器：裸 F5 当 ⌘R
     pub const BROWSER: u64 = 1 << 1;
@@ -126,7 +127,7 @@ pub struct Substitute {
 /// 生效的规则。由配置编译而来，运行期只读。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rules {
-    /// 物理 Ctrl 当作 ⌘ + 字母（terminals 组里保持 ⌃ 原义）
+    /// 物理 Ctrl 当作 ⌘ + 字母（含终端：Ctrl+C 复制，中断用 Win+C）
     pub ctrl_as_cmd: bool,
     /// 物理 Win(⌘) 当作 ⌃：终端里的中断/控制键（Win+C = Ctrl+C）
     pub cmd_as_ctrl: bool,
@@ -402,9 +403,7 @@ impl Remapper {
         } else if was_held == 0 {
             // 本轮第一个 Ctrl 按下时定身份；同一轮里再按第二个 Ctrl 沿用。
             // 身份一旦定了就不再随前台应用变，否则按下和松开会不对称。
-            self.ctl_as_cmd = self.rules.ctrl_as_cmd
-                && !env.has(groups::TERMINAL)
-                && !env.has(groups::PASSTHROUGH);
+            self.ctl_as_cmd = self.rules.ctrl_as_cmd && !env.has(groups::PASSTHROUGH);
         }
 
         if was_cmd || self.ctl_as_cmd {
@@ -795,40 +794,65 @@ mod tests {
     // ---------------- 终端与透传
 
     #[test]
-    fn terminal_keeps_ctrl_meaning() {
+    fn terminal_ctrl_also_becomes_command() {
+        // 终端不再豁免：Ctrl+C 是复制（⌘C），中断走 Win+C（⌃C，见上方 cmd 测试）
         let mut r = Remapper::new(Rules::default());
         let env = term();
         assert_eq!(
             r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &env),
-            Decision::Keep
+            Decision::Rewrite {
+                keycode: keys::COMMAND,
+                flags: CMD_L
+            }
         );
         assert_eq!(
             r.on_input(Input::key_down(C, CTL_DOWN), &env),
-            Decision::Keep
+            Decision::Rewrite {
+                keycode: C,
+                flags: CMD_L
+            }
         );
-        assert_eq!(r.on_input(Input::key_up(C, CTL_DOWN), &env), Decision::Keep);
+        assert_eq!(
+            r.on_input(Input::key_up(C, CTL_DOWN), &env),
+            Decision::Rewrite {
+                keycode: C,
+                flags: CMD_L
+            }
+        );
         assert_eq!(
             r.on_input(Input::flags_changed(keys::CONTROL, NONE), &env),
-            Decision::Keep
+            Decision::Rewrite {
+                keycode: keys::COMMAND,
+                flags: NONE
+            }
         );
     }
 
     #[test]
     fn ctrl_identity_is_decided_when_pressed() {
         let mut r = Remapper::new(Rules::default());
-        // 终端里按下 Ctrl：保持 Ctrl
+        // 终端里按下 Ctrl：同样是 ⌘（终端不再豁免）
         assert_eq!(
             r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &term()),
-            Decision::Keep
+            Decision::Rewrite {
+                keycode: keys::COMMAND,
+                flags: CMD_L
+            }
         );
-        // 按住期间用鼠标切到别的应用：这一轮仍是 Ctrl，直到松开
+        // 按住期间用鼠标切到别的应用：这一轮仍是 ⌘，直到松开
         assert_eq!(
             r.on_input(Input::key_down(C, CTL_DOWN), &plain()),
-            Decision::Keep
+            Decision::Rewrite {
+                keycode: C,
+                flags: CMD_L
+            }
         );
         assert_eq!(
             r.on_input(Input::flags_changed(keys::CONTROL, NONE), &plain()),
-            Decision::Keep
+            Decision::Rewrite {
+                keycode: keys::COMMAND,
+                flags: NONE
+            }
         );
         // 下一次按下时按新的前台应用定身份
         assert_eq!(
