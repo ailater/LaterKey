@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use laterkey_core::{
-    flags, keys, png_dimensions, Chord, ClipboardEntry, GroupTable, History, ImageFormat, Rules,
+    flags, keys, png_dimensions, Chord, ClipboardEntry, GroupTable, History, Rules,
 };
 
 use super::access;

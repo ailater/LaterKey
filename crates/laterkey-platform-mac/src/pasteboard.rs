@@ -64,8 +64,8 @@ fn read_image(pb: &NSPasteboard) -> Option<ClipContent> {
         ("public.png", ImageFormat::Png),
         ("public.tiff", ImageFormat::Tiff),
     ] {
-        // SAFETY: dataForType: 是 ObjC 方法；NSData 只读拷成 Vec
-        if let Some(data) = unsafe { pb.dataForType(&NSString::from_str(ty)) } {
+        // NSData 只读拷成 Vec，绑定里这个方法是 safe 的
+        if let Some(data) = pb.dataForType(&NSString::from_str(ty)) {
             return Some(ClipContent::Image {
                 bytes: data.to_vec(),
                 format,
@@ -97,8 +97,8 @@ pub fn write_image(bytes: &[u8], format: ImageFormat) -> bool {
             ImageFormat::Png => "public.png",
             ImageFormat::Tiff => "public.tiff",
         };
-        // SAFETY: setData:forType: 是 ObjC 方法；NSData 只借字节
-        unsafe { pb.setData_forType(Some(&NSData::with_bytes(bytes)), &NSString::from_str(ty)) }
+        // NSData 只借字节，绑定里这个方法是 safe 的
+        pb.setData_forType(Some(&NSData::with_bytes(bytes)), &NSString::from_str(ty))
     })
 }
 
