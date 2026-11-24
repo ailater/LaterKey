@@ -126,6 +126,10 @@ struct TrayApp {
     /// Win+V 呼出面板：worker 推 panel_seq，这里轮询。None = 面板关着。
     panel: Option<Panel>,
     panel_seq_seen: u64,
+    /// 已同步到托盘菜单勾选的开关状态：面板/菜单/热加载任何路径改了
+    /// toggles，轮询发现不一致就刷新菜单勾选（设置面板改开关不经过
+    /// TrayApp::apply，只靠菜单路径同步会漏）。
+    synced: Option<Toggles>,
 }
 
 impl TrayApp {
@@ -149,6 +153,7 @@ impl TrayApp {
             inner: None,
             panel: None,
             panel_seq_seen: 0,
+            synced: None,
         }
     }
 
@@ -214,6 +219,20 @@ impl eframe::App for TrayApp {
         if self.shared.stop.load(std::sync::atomic::Ordering::SeqCst) {
             self.quit_requested = true;
             ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+        }
+
+        // 托盘勾选跟随 toggles：设置面板的改动不经过 TrayApp::apply，
+        // 在这里轮询兜底，保证任何路径改动后菜单勾选都一致
+        if let Some(tray) = &self.tray {
+            let current = self
+                .toggles
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            if self.synced.as_ref() != Some(&current) {
+                tray.sync(&current);
+                self.synced = Some(current);
+            }
         }
 
         // Win+V 是开关（toggle）：面板关着 → 呼出；开着 → 再按一次关闭。
