@@ -11,23 +11,43 @@ const CANDIDATES: &[&str] = &[
     "/System/Library/Fonts/Supplemental/Songti.ttc",
 ];
 
-/// 把系统中文字体挂成 egui 的首选字体族（内置字体留作缺字 fallback）。
-/// 找不到字体就不动——退回 egui 默认字体（中文会显示为方框）。
+/// macOS 系统字体（SF NS）：拉丁与苹果符号（⌘ ⌃ ⇧ ⌥ ⌫）都齐全，字形与
+/// 系统一致。排在苹方之前——苹方虽含基本拉丁，但用 SF 渲染更精致，且
+/// 「SF + 苹方」本来就是 macOS 原生组合，混排基线协调。
+const SYMBOL_FONT: &str = "/System/Library/Fonts/SFNS.ttf";
+
+/// 把系统字体挂成 egui 的字体族（内置字体留作缺字 fallback）。
+/// 顺序：SF（拉丁/苹果符号）→ 苹方（中文）→ 内置兜底。
+/// 找不到任何字体就不动——退回 egui 默认字体（中文会显示为方框）。
 pub fn setup(ctx: &egui::Context) {
-    let Some(bytes) = CANDIDATES.iter().find_map(|p| std::fs::read(p).ok()) else {
+    let symbols = std::fs::read(SYMBOL_FONT).ok();
+    let cjk = CANDIDATES.iter().find_map(|p| std::fs::read(p).ok());
+    if symbols.is_none() && cjk.is_none() {
         return;
-    };
+    }
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "system-cjk".into(),
-        egui::FontData::from_owned(bytes).into(),
-    );
+    if let Some(bytes) = symbols {
+        fonts.font_data.insert(
+            "system-symbols".into(),
+            egui::FontData::from_owned(bytes).into(),
+        );
+    }
+    if let Some(bytes) = cjk {
+        fonts.font_data.insert(
+            "system-cjk".into(),
+            egui::FontData::from_owned(bytes).into(),
+        );
+    }
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts
-            .families
-            .entry(family)
-            .or_default()
-            .insert(0, "system-cjk".into());
+        let list = fonts.families.entry(family).or_default();
+        // 插入顺序决定 fallback 次序：先 SF 后苹方（push 到尾部，位于
+        // 内置字体之前还要再调——直接重建整个列表最直白）
+        *list = ["system-symbols", "system-cjk"]
+            .iter()
+            .filter(|name| fonts.font_data.contains_key(**name))
+            .map(|name| (*name).to_string())
+            .chain(list.drain(..))
+            .collect();
     }
     ctx.set_fonts(fonts);
 }
