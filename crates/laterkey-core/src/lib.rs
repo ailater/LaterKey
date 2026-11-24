@@ -12,6 +12,9 @@ pub mod flags;
 pub mod keys;
 pub mod remap;
 
-pub use clipboard::{ClipboardEntry, History, MAX_ENTRIES, MAX_TEXT_BYTES};
+pub use clipboard::{
+    png_dimensions, ClipboardEntry, History, ImageData, ImageFormat, MAX_ENTRIES, MAX_IMAGE_BYTES,
+    MAX_IMAGE_TOTAL_BYTES, MAX_TEXT_BYTES,
+};
 pub use config::{compile, parse, parse_chord, Compiled, Config, GroupTable};
 pub use remap::{groups, Action, Chord, Decision, Env, Input, Kind, Remapper, Rules, Substitute};

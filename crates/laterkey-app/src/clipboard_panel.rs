@@ -56,6 +56,8 @@ struct PanelState {
     filtered: Vec<usize>,
     /// 条目小写副本缓存（按 id）：搜索匹配不每帧对全文重复分配。
     lower: HashMap<u64, String>,
+    /// 图片条目的缩略图纹理缓存（按条目 id），解码与上传只在首次。
+    textures: HashMap<u64, egui::TextureHandle>,
 }
 
 /// 面板句柄。TrayApp 持有，开着时每帧调一次 [`Panel::show`]。
@@ -155,6 +157,9 @@ impl Panel {
             st.last_snapshot = Some(entries.clone());
             let query = st.search.to_lowercase();
             st.filtered = refilter(&entries, &query, &mut st.lower);
+            // 图片条目被淘汰或清空后释放纹理
+            st.textures
+                .retain(|id, _| entries.iter().any(|e| e.id == *id));
         }
         let selected_row = row_of_selected(&st.filtered, &entries, st.selected);
 
@@ -205,7 +210,6 @@ impl Panel {
                     for row in 0..st.filtered.len() {
                         let i = st.filtered[row];
                         let entry = &entries[i];
-                        let (l1, l2) = preview_lines(&entry.text, PREVIEW_CHARS);
                         let selected = row == selected_row;
                         let app = source_name(entry);
                         let inner = egui::Frame::new()
@@ -223,26 +227,71 @@ impl Panel {
                             .inner_margin(egui::Margin::same(10))
                             .show(ui, |ui| {
                                 ui.set_min_width(ui.available_width());
-                                ui.add(
-                                    egui::Label::new(RichText::new(&l1).size(13.0).color(TEXT))
-                                        .truncate(),
-                                );
-                                if !l2.is_empty() {
-                                    ui.add(
-                                        egui::Label::new(RichText::new(&l2).size(12.0).color(DESC))
+                                match &entry.image {
+                                    Some(img) => {
+                                        // 图片条目：缩略图 + 描述（text 存的是「图片 宽×高」）
+                                        ui.horizontal(|ui| {
+                                            if let Some(tex) =
+                                                texture_for(ui.ctx(), &mut st, entry.id, img)
+                                            {
+                                                let aspect = tex.size_vec2();
+                                                let h = 48.0;
+                                                let w =
+                                                    (aspect.x / aspect.y * h).clamp(28.0, 160.0);
+                                                ui.add(
+                                                    egui::Image::new(&tex)
+                                                        .fit_to_exact_size(egui::vec2(w, h)),
+                                                );
+                                            }
+                                            ui.vertical(|ui| {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(&entry.text)
+                                                            .size(13.0)
+                                                            .color(TEXT),
+                                                    )
+                                                    .truncate(),
+                                                );
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "{} · {}",
+                                                        relative_time(entry.captured_at, now),
+                                                        app
+                                                    ))
+                                                    .size(11.0)
+                                                    .color(MUTED),
+                                                );
+                                            });
+                                        });
+                                    }
+                                    None => {
+                                        let (l1, l2) = preview_lines(&entry.text, PREVIEW_CHARS);
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&l1).size(13.0).color(TEXT),
+                                            )
                                             .truncate(),
-                                    );
+                                        );
+                                        if !l2.is_empty() {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(&l2).size(12.0).color(DESC),
+                                                )
+                                                .truncate(),
+                                            );
+                                        }
+                                        ui.add_space(2.0);
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{} · {}",
+                                                relative_time(entry.captured_at, now),
+                                                app
+                                            ))
+                                            .size(11.0)
+                                            .color(MUTED),
+                                        );
+                                    }
                                 }
-                                ui.add_space(2.0);
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{} · {}",
-                                        relative_time(entry.captured_at, now),
-                                        app
-                                    ))
-                                    .size(11.0)
-                                    .color(MUTED),
-                                );
                             });
                         let resp = ui.interact(
                             inner.response.rect,
@@ -298,6 +347,34 @@ impl Panel {
             }
         });
     }
+}
+
+/// 条目缩略图纹理：按条目 id 缓存，解码与上传只在首次。
+/// 最大边 1024 缩样后再上传——Retina 截图原尺寸一张就是几十 MB 显存。
+fn texture_for(
+    ctx: &egui::Context,
+    st: &mut PanelState,
+    id: u64,
+    img: &laterkey_core::ImageData,
+) -> Option<egui::TextureHandle> {
+    if let Some(tex) = st.textures.get(&id) {
+        return Some(tex.clone());
+    }
+    let decoded = image::load_from_memory(&img.bytes).ok()?;
+    let decoded = if decoded.width().max(decoded.height()) > 1024 {
+        decoded.thumbnail(1024, 1024)
+    } else {
+        decoded
+    };
+    let size = [decoded.width() as usize, decoded.height() as usize];
+    let rgba = decoded.into_rgba8().into_raw();
+    let tex = ctx.load_texture(
+        format!("clip-{id}"),
+        egui::ColorImage::from_rgba_unmultiplied(size, &rgba),
+        egui::TextureOptions::LINEAR,
+    );
+    st.textures.insert(id, tex.clone());
+    Some(tex)
 }
 
 /// 过滤 + 小写副本缓存。只在搜索词或快照变化时调用一次；
@@ -439,6 +516,7 @@ mod tests {
             text: text.into(),
             captured_at: 0,
             source_bundle_id: String::new(),
+            image: None,
         }
     }
 

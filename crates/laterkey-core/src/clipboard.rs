@@ -10,6 +10,25 @@ use serde::{Deserialize, Serialize};
 pub const MAX_ENTRIES: usize = 100;
 /// 单条文本上限（字节数），超过直接丢弃，不入历史。
 pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
+/// 单张图片上限（字节数）。5K 全屏截图的 PNG 一般 5–15 MiB，这里留足余量。
+pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+/// 全部图片条目的总内存预算：图片远大于文本，100 张截图能把内存吃到 GB 级，
+/// 超预算从最旧的图片开始淘汰（文本条目不受预算影响）。
+pub const MAX_IMAGE_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+
+/// 图片格式：采集时按剪贴板类型定，贴回时按原格式原样写回，不做转码。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImageFormat {
+    Png,
+    Tiff,
+}
+
+/// 一张剪贴板图片的原始字节。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageData {
+    pub bytes: Vec<u8>,
+    pub format: ImageFormat,
+}
 
 /// 一条剪贴板记录。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +40,9 @@ pub struct ClipboardEntry {
     pub captured_at: u64,
     /// 拷贝来源应用的 bundle id。
     pub source_bundle_id: String,
+    /// 图片条目时有值；此时 `text` 是给列表和搜索用的描述（如「图片 1920×1080」）。
+    #[serde(default)]
+    pub image: Option<ImageData>,
 }
 
 /// 从新到旧的剪贴板历史：index 0 是最新。
@@ -80,12 +102,72 @@ impl History {
                 text,
                 captured_at,
                 source_bundle_id: source_bundle_id.into(),
+                image: None,
             },
         );
+        self.inserted();
+        Some(id)
+    }
+
+    /// 记录一张图片拷贝，返回条目 id。
+    ///
+    /// 超过 [`MAX_IMAGE_BYTES`] 拒收；图片总内存超出 [`MAX_IMAGE_TOTAL_BYTES`]
+    /// 时从最旧的图片开始淘汰给新图腾地方（单张上限低于总预算，删光必然放得下）。
+    /// 与已有图片逐字节相同则视为同一条：移顶、刷新时间，id 不变——贴回写回
+    /// 板上的就是这份字节，再次采集命中这里，不成环。
+    pub fn record_image(
+        &mut self,
+        bytes: Vec<u8>,
+        format: ImageFormat,
+        captured_at: u64,
+        source_bundle_id: impl Into<String>,
+        label: impl Into<String>,
+    ) -> Option<u64> {
+        if bytes.len() > MAX_IMAGE_BYTES {
+            return None;
+        }
+        if let Some(pos) = self.entries.iter().position(|e| {
+            e.image
+                .as_ref()
+                .is_some_and(|img| img.bytes.len() == bytes.len() && img.bytes == bytes)
+        }) {
+            self.move_to_top(pos, captured_at);
+            return Some(self.entries[0].id);
+        }
+        while self.total_image_bytes() + bytes.len() > MAX_IMAGE_TOTAL_BYTES {
+            let victim = self.entries.iter().rposition(|e| e.image.is_some())?;
+            self.entries.remove(victim);
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        self.entries.insert(
+            0,
+            ClipboardEntry {
+                id,
+                text: label.into(),
+                captured_at,
+                source_bundle_id: source_bundle_id.into(),
+                image: Some(ImageData { bytes, format }),
+            },
+        );
+        self.inserted();
+        Some(id)
+    }
+
+    /// 现存图片条目的总字节数（内存预算的账本）。
+    fn total_image_bytes(&self) -> usize {
+        self.entries
+            .iter()
+            .filter_map(|e| e.image.as_ref())
+            .map(|img| img.bytes.len())
+            .sum()
+    }
+
+    /// 插顶后的公共收尾：满了淘汰最旧一条。
+    fn inserted(&mut self) {
         if self.entries.len() > MAX_ENTRIES {
             self.entries.pop();
         }
-        Some(id)
     }
 
     /// 贴回成功后按 id 置顶并刷新时间。
@@ -126,6 +208,18 @@ impl History {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+/// 从 PNG 字节里读 IHDR 宽高，给图片条目生成「图片 宽×高」描述用。
+/// 解析不动（不是 PNG/太短）返回 None，显示退化为「图片」。
+pub fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.len() < 24 || bytes[..8] != SIG || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    Some((w, h))
 }
 
 #[cfg(test)]
@@ -229,6 +323,97 @@ mod tests {
         assert_eq!(id, b);
         assert_eq!(h.entries()[0].text, "b");
         assert_eq!(h.len(), 3);
+    }
+
+    #[test]
+    fn image_entries_basic_and_dedupe() {
+        let mut h = History::new();
+        let png = vec![0x89, b'P', b'N', b'G'];
+        let id = h
+            .record_image(png.clone(), ImageFormat::Png, 1000, "com.a", "图片")
+            .unwrap();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h.entries()[0].text, "图片");
+        assert_eq!(
+            h.entries()[0].image.as_ref().unwrap().format,
+            ImageFormat::Png
+        );
+        // 同一张图再拷一次：去重移顶，id 不变
+        let again = h
+            .record_image(png, ImageFormat::Png, 2000, "com.b", "图片")
+            .unwrap();
+        assert_eq!(again, id);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h.entries()[0].captured_at, 2000);
+        assert_eq!(h.entries()[0].source_bundle_id, "com.a", "去重不换来源");
+        // 贴回置顶后再次采集不成环（与文本同款语义）
+        assert!(h.touch(id, 3000));
+        assert_eq!(
+            h.record_image(
+                h.entries()[0].image.as_ref().unwrap().bytes.clone(),
+                ImageFormat::Png,
+                4000,
+                "com.self",
+                "图片"
+            )
+            .unwrap(),
+            id
+        );
+        assert_eq!(h.len(), 1);
+    }
+
+    #[test]
+    fn oversized_image_is_rejected_without_consuming_id() {
+        let mut h = History::new();
+        let ok = vec![0u8; MAX_IMAGE_BYTES];
+        let too_big = vec![0u8; MAX_IMAGE_BYTES + 1];
+        assert!(h
+            .record_image(ok, ImageFormat::Tiff, 1, "com.x", "图片")
+            .is_some());
+        let next = h.next_id;
+        assert!(h
+            .record_image(too_big, ImageFormat::Tiff, 2, "com.x", "图片")
+            .is_none());
+        assert_eq!(h.next_id, next, "拒收不消耗 id");
+        assert_eq!(h.len(), 1);
+    }
+
+    #[test]
+    fn image_budget_evicts_oldest_images_only() {
+        let mut h = History::new();
+        h.record("文本条目", 1, "com.x");
+        // 每张恰好单张上限（20 MiB）且字节互不相同（相同会走去重）：三张共 60 MiB
+        let mut big = vec![7u8; MAX_IMAGE_BYTES];
+        for (at, name) in [(2u64, "图片A"), (3, "图片B"), (4, "图片C")] {
+            big[0] = at as u8;
+            h.record_image(big.clone(), ImageFormat::Png, at, "com.x", name);
+        }
+        assert_eq!(h.len(), 4);
+        // 第四张放不下（60+20 > 64）：最旧的「图片A」被淘汰，文本条目保留
+        h.record_image(
+            vec![8u8; MAX_IMAGE_BYTES],
+            ImageFormat::Png,
+            5,
+            "com.x",
+            "图片D",
+        );
+        assert!(h.entries().iter().all(|e| e.text != "图片A"));
+        for kept in ["文本条目", "图片B", "图片C", "图片D"] {
+            assert!(h.entries().iter().any(|e| e.text == kept), "{kept} 应保留");
+        }
+        assert!(h.total_image_bytes() <= MAX_IMAGE_TOTAL_BYTES);
+    }
+
+    #[test]
+    fn png_dimensions_reads_ihdr() {
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&[0, 0, 0, 13]); // IHDR 长度
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&1920u32.to_be_bytes());
+        png.extend_from_slice(&1080u32.to_be_bytes());
+        assert_eq!(png_dimensions(&png), Some((1920, 1080)));
+        assert_eq!(png_dimensions(&png[..20]), None, "太短");
+        assert_eq!(png_dimensions(b"not a png at all......"), None);
     }
 
     #[test]

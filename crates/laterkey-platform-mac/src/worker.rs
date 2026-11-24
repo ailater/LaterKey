@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use laterkey_core::{flags, keys, Chord, ClipboardEntry, GroupTable, History, Rules};
+use laterkey_core::{
+    flags, keys, png_dimensions, Chord, ClipboardEntry, GroupTable, History, ImageFormat, Rules,
+};
 
 use super::access;
 use super::dock;
@@ -235,29 +237,60 @@ fn capture_enabled(win_key_clipboard: bool, secure_input: bool) -> bool {
 }
 
 /// 采集一次剪贴板：changeCount 变了才取内容，入库后发布快照给界面。
+/// 文本与图片各自入库；带禁采标记、空白、文件引用都不采。
 fn capture_clipboard(shared: &Shared, history: &mut History, last_change: &mut u64) {
     let change = pasteboard::change_count();
     if change == *last_change {
         return;
     }
     *last_change = change;
-    // 类型表先拦（密码管理器标记），再拦非文本与空白
-    let text = match pasteboard::read() {
-        Some(pasteboard::ClipContent::Text(text)) if pasteboard::worth_keeping(&text) => text,
+    let content = match pasteboard::read() {
+        Some(pasteboard::ClipContent::Text(text)) if pasteboard::worth_keeping(&text) => {
+            if history
+                .record(text, now_ms(), source_bundle(shared))
+                .is_some()
+            {
+                shared.set_history(history.entries().to_vec());
+                trace(
+                    shared,
+                    format!("剪贴板采到一条文本，历史 {} 条", history.len()),
+                );
+            }
+            return;
+        }
+        Some(pasteboard::ClipContent::Image { bytes, format }) => (bytes, format),
         _ => return,
     };
-    let now = now_ms();
-    // 拷贝来源 = 拷贝发生时刻的真实前台（现查，比 50ms 前的快照准；
-    // 面板开着期间前台是 LaterKey 自己，条目来源会记成自己，已知限制）
+    let (bytes, format) = content;
+    let label = describe_image(&bytes);
+    if history
+        .record_image(bytes, format, now_ms(), source_bundle(shared), label)
+        .is_some()
+    {
+        shared.set_history(history.entries().to_vec());
+        trace(
+            shared,
+            format!("剪贴板采到一张图片，历史 {} 条", history.len()),
+        );
+    }
+}
+
+/// 拷贝来源应用 = 拷贝发生时刻的真实前台（现查，比 50ms 前的快照准；
+/// 面板开着期间前台是 LaterKey 自己，条目来源会记成自己，已知限制）。
+fn source_bundle(shared: &Shared) -> String {
     let pid = focus::frontmost_pid().unwrap_or_else(|| shared.front_pid.load(Ordering::Relaxed));
-    let bundle = if pid > 0 {
+    if pid > 0 {
         focus::bundle_id_for_pid(pid).unwrap_or_default()
     } else {
         String::new()
-    };
-    if history.record(text, now, bundle).is_some() {
-        shared.set_history(history.entries().to_vec());
-        trace(shared, format!("剪贴板采到一条，历史 {} 条", history.len()));
+    }
+}
+
+/// 图片条目的列表描述：PNG 从 IHDR 读尺寸，其余给通用文案。
+fn describe_image(bytes: &[u8]) -> String {
+    match png_dimensions(bytes) {
+        Some((w, h)) => format!("图片 {w}×{h}"),
+        None => "图片".into(),
     }
 }
 
@@ -277,7 +310,11 @@ fn begin_paste_back(shared: &Shared, slot: &mut Option<PasteBack>, entry: Clipbo
         info("贴回取消：没有记录打开面板时的前台应用");
         return;
     }
-    if !pasteboard::write_string(&entry.text) {
+    let written = match &entry.image {
+        Some(img) => pasteboard::write_image(&img.bytes, img.format),
+        None => pasteboard::write_string(&entry.text),
+    };
+    if !written {
         info("贴回失败：写回剪贴板不成功");
         return;
     }
@@ -384,6 +421,7 @@ mod tests {
             text: "hi".into(),
             captured_at: 0,
             source_bundle_id: String::new(),
+            image: None,
         };
         let mut slot = Some(PasteBack {
             entry,

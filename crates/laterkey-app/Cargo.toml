@@ -21,4 +21,4 @@ toml = "0.9"
 eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
 tray-icon = "0.24"
 winit = "0.30"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "tiff"] }

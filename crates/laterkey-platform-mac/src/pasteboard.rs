@@ -9,7 +9,9 @@
 
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
-use objc2_foundation::NSString;
+use objc2_foundation::{NSData, NSString};
+
+use laterkey_core::ImageFormat;
 
 /// 「隐藏内容」标记：密码管理器拷贝的口令、密钥之类，不许落历史。
 pub const CONCEALED_TYPE: &str = "org.nspasteboard.ConcealedType";
@@ -21,10 +23,12 @@ pub const TRANSIENT_TYPE: &str = "org.nspasteboard.TransientType";
 pub enum ClipContent {
     /// 带禁采标记（Concealed/Transient）。
     Concealed,
-    /// 板上没有字符串：图片、文件引用等，采不了。
-    NoText,
+    /// 板上没有可采的内容（文件引用等）。
+    Nothing,
     /// 一段文本。
     Text(String),
+    /// 一张图片：原始字节原样入库，贴回时原样写回，不转码。
+    Image { bytes: Vec<u8>, format: ImageFormat },
 }
 
 /// 板上内容的版本号。取不到（理论上不会）返回 0。
@@ -48,9 +52,27 @@ pub fn read() -> Option<ClipContent> {
         // SAFETY: NSPasteboardTypeString 是系统导出的常量字符串
         match pb.stringForType(unsafe { NSPasteboardTypeString }) {
             Some(string) => Some(ClipContent::Text(string.to_string())),
-            None => Some(ClipContent::NoText),
+            None => read_image(&pb),
         }
     })
+}
+
+/// 板上没有文本时找图片：PNG 优先（浏览器「复制图像」），再 TIFF
+///（系统截图存剪贴板的类型）。都不在就 Nothing。
+fn read_image(pb: &NSPasteboard) -> Option<ClipContent> {
+    for (ty, format) in [
+        ("public.png", ImageFormat::Png),
+        ("public.tiff", ImageFormat::Tiff),
+    ] {
+        // SAFETY: dataForType: 是 ObjC 方法；NSData 只读拷成 Vec
+        if let Some(data) = unsafe { pb.dataForType(&NSString::from_str(ty)) } {
+            return Some(ClipContent::Image {
+                bytes: data.to_vec(),
+                format,
+            });
+        }
+    }
+    Some(ClipContent::Nothing)
 }
 
 /// 类型表里有没有禁采标记：任一项精确命中就拦。
@@ -63,6 +85,21 @@ pub fn is_concealed(types: &[String]) -> bool {
 /// 文本值不值得入库：空串和纯空白不要（误碰空格/回车拷一下不该进历史）。
 pub fn worth_keeping(text: &str) -> bool {
     !text.trim().is_empty()
+}
+
+/// 把一张图片写回剪贴板（清板后按原格式放类型与字节）。贴回历史图片条目用。
+/// 写完采集会再次采到同一份字节，走历史的去重，不成环。
+pub fn write_image(bytes: &[u8], format: ImageFormat) -> bool {
+    autoreleasepool(|_pool| {
+        let pb = NSPasteboard::generalPasteboard();
+        pb.clearContents();
+        let ty = match format {
+            ImageFormat::Png => "public.png",
+            ImageFormat::Tiff => "public.tiff",
+        };
+        // SAFETY: setData:forType: 是 ObjC 方法；NSData 只借字节
+        unsafe { pb.setData_forType(Some(&NSData::with_bytes(bytes)), &NSString::from_str(ty)) }
+    })
 }
 
 /// 把一段文本写回剪贴板（清板后只放 NSPasteboardTypeString）。

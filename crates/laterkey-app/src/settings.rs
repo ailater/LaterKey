@@ -312,7 +312,7 @@ impl SettingsApp {
                 changed |= row(
                     ui,
                     "Win+V 剪贴板历史",
-                    "Win+V 弹出历史面板，搜索后选中即贴回（⌘V 粘贴不受影响）",
+                    "Win+V 弹出历史面板，文本图片都收，选中即贴回（⌘V 粘贴不受影响）",
                     &mut t.win_key_clipboard,
                 );
                 changed |= row(
