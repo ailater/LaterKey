@@ -216,6 +216,69 @@ pub struct Remapper {
 }
 
 impl Remapper {
+    /// 进程退出前的状态复位：返回「当前按住且可能已被改写的修饰键」的
+    /// 抬起事件（keycode + flags=0），并清空内部按住状态。
+    ///
+    /// 不补这个的话：Ctrl 按住期间进程退出，系统最后看到的是改写后的
+    /// 「⌘ 按下」，之后真实 Ctrl 的抬起不再被改写（tap 已消失），系统就
+    /// 卡在 ⌘ 按下状态——退出后其他应用里快捷键全乱（卡键）。
+    pub fn release_all(&mut self) -> Vec<Chord> {
+        let mut out = Vec::new();
+        if self.ctl_held & flags::L_CTL != 0 {
+            out.push(Chord {
+                keycode: if self.ctl_as_cmd {
+                    keys::COMMAND
+                } else {
+                    keys::CONTROL
+                },
+                flags: 0,
+            });
+        }
+        if self.ctl_held & flags::R_CTL != 0 {
+            out.push(Chord {
+                keycode: if self.ctl_as_cmd {
+                    keys::RIGHT_COMMAND
+                } else {
+                    keys::RIGHT_CONTROL
+                },
+                flags: 0,
+            });
+        }
+        if self.cmd_held & flags::L_CMD != 0 {
+            out.push(Chord {
+                keycode: if self.cmd_as_ctl {
+                    keys::CONTROL
+                } else {
+                    keys::COMMAND
+                },
+                flags: 0,
+            });
+        }
+        if self.cmd_held & flags::R_CMD != 0 {
+            out.push(Chord {
+                keycode: if self.cmd_as_ctl {
+                    keys::RIGHT_CONTROL
+                } else {
+                    keys::RIGHT_COMMAND
+                },
+                flags: 0,
+            });
+        }
+        if self.alt_as_cmd {
+            // Alt+Tab 切换模式：左 Alt 一直以 ⌘ 身份出现，抬起也按 ⌘ 抬
+            out.push(Chord {
+                keycode: keys::COMMAND,
+                flags: 0,
+            });
+        }
+        self.ctl_held = 0;
+        self.cmd_held = 0;
+        self.ctl_as_cmd = false;
+        self.cmd_as_ctl = false;
+        self.alt_as_cmd = false;
+        out
+    }
+
     pub fn new(rules: Rules) -> Self {
         Self {
             rules,
@@ -792,6 +855,44 @@ mod tests {
     }
 
     // ---------------- 终端与透传
+
+    #[test]
+    fn release_all_emits_current_modifier_identities() {
+        let env = plain();
+        // Ctrl 按住（已改写成 ⌘）：退出要补 ⌘ 抬起，而不是 Ctrl 抬起
+        let mut r = Remapper::new(Rules::default());
+        r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &env);
+        let chords = r.release_all();
+        assert_eq!(chords.len(), 1);
+        assert_eq!(chords[0].keycode, keys::COMMAND);
+        assert_eq!(chords[0].flags, 0);
+        assert!(r.release_all().is_empty(), "状态已清空，再调为空");
+    }
+
+    #[test]
+    fn release_all_covers_win_and_alt_tab() {
+        let env = plain();
+        // Win(⌘) 按住（已改写成 ⌃）
+        let mut r = Remapper::new(Rules::default());
+        r.on_input(Input::flags_changed(keys::COMMAND, CMD_L), &env);
+        let chords = r.release_all();
+        assert_eq!(chords.len(), 1);
+        assert_eq!(chords[0].keycode, keys::CONTROL);
+
+        // Alt+Tab 切换模式：左 Alt 以 ⌘ 身份抬起
+        let mut r = Remapper::new(Rules::default());
+        r.on_input(Input::flags_changed(keys::OPTION, ALT_DOWN), &env);
+        r.on_input(Input::key_down(TAB, ALT_DOWN), &env);
+        let chords = r.release_all();
+        assert_eq!(chords.len(), 1);
+        assert_eq!(chords[0].keycode, keys::COMMAND);
+    }
+
+    #[test]
+    fn release_all_without_held_keys_is_empty() {
+        let mut r = Remapper::new(Rules::default());
+        assert!(r.release_all().is_empty());
+    }
 
     #[test]
     fn terminal_ctrl_also_becomes_command() {

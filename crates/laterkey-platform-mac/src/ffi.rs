@@ -89,7 +89,6 @@ extern "C" {
         virtual_key: u16,
         key_down: bool,
     ) -> CGEventRef;
-    #[cfg(test)]
     pub fn CGEventSetType(event: CGEventRef, ty: u32);
     pub fn CGEventPost(tap: u32, event: CGEventRef);
     pub fn CGEventSourceCreate(state_id: i32) -> CGEventSourceRef;

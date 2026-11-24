@@ -638,7 +638,13 @@ fn tap_main(
     drop(port);
     drop(rl);
     // SAFETY: ctx_ptr 是上面 into_raw 出来的，且此后不再有回调
-    drop(unsafe { Box::from_raw(ctx_ptr) });
+    let mut ctx = unsafe { Box::from_raw(ctx_ptr) };
+    // 退出前复位修饰键：按住的键若被改写过，系统还认为「改写后的身份」按着，
+    // 补一条抬起（带 OWN_TAG 直接投递，不再进状态机）。tap 已失效，顺序安全。
+    for chord in ctx.remapper.release_all() {
+        super::post::flags_changed(chord);
+    }
+    drop(ctx);
 }
 
 #[cfg(test)]
