@@ -309,6 +309,17 @@ fn outline_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ))
 }
 
+/// 轻量小按钮：细描边 + 小 padding + 11.5pt，给「配置目录」这类辅助入口用。
+/// 标准按钮 13pt + 14×7 padding 与版本号小字放一起会凸出一块，量级不搭。
+fn small_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(label).size(11.5).color(DESC))
+            .fill(CARD)
+            .stroke(egui::Stroke::new(1.0, BORDER))
+            .corner_radius(egui::CornerRadius::same(6)),
+    )
+}
+
 // ---------------------------------------------------------------- App
 
 pub struct SettingsApp {
@@ -590,21 +601,20 @@ fn about_section(ui: &mut egui::Ui) {
                     .color(DESC),
             );
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("版本 v{}", env!("CARGO_PKG_VERSION")))
-                        .size(11.5)
-                        .color(MUTED),
-                );
-                if outline_button(ui, "配置目录").clicked() {
-                    if let Some(path) = crate::toggles::path() {
-                        if let Some(parent) = path.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                            let _ = std::process::Command::new("open").arg(parent).spawn();
-                        }
+            ui.label(
+                RichText::new(format!("版本 v{}", env!("CARGO_PKG_VERSION")))
+                    .size(11.5)
+                    .color(MUTED),
+            );
+            ui.add_space(6.0);
+            if small_button(ui, "打开配置目录").clicked() {
+                if let Some(path) = crate::toggles::path() {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                        let _ = std::process::Command::new("open").arg(parent).spawn();
                     }
                 }
-            });
+            }
         });
     });
 }

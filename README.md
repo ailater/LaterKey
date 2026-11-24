@@ -1,8 +1,36 @@
 # LaterKey
 
-让 Windows 布局的普通键盘在 macOS 上按 Windows 的习惯工作。纯用户态实现，不装驱动、不依赖 Karabiner，只需要辅助功能权限。
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Homebrew cask](https://img.shields.io/badge/brew-crazykun%2Failater-orange.svg)](https://github.com/crazykun/homebrew-ailater)
+
+**不装驱动的 Karabiner 替代品** —— Windows 布局的普通键盘插上 Mac，Ctrl+C 原地就能复制。
+
+纯用户态实现，不装虚拟 HID 驱动、不用写 JSON 配置。图形界面和终端同时符合 Windows 习惯。
 
 ![LaterKey 设置面板](docs/images/settings.png)
+
+## 为什么是 LaterKey
+
+用普通键盘配 Mac，最别扭的一件事：手指按 Ctrl+C，macOS 只认 ⌘C。系统自带的「修饰键互换」只解决一半——界面能复制了，终端里的 Ctrl+C（中断信号）却跟着没了。
+
+LaterKey 在用户态拦截按键，按角色分流：
+
+- **图形界面**：物理 Ctrl → ⌘，Ctrl+C/V/X/A/Z 全部按 Windows 手感走；
+- **终端控制**：物理 Win → ⌃，Win+C 中断、Win+D 结束输入，控制键一个不少；
+- **Windows 特色键**：Alt+Tab 切应用、Win+L 锁屏、F2 重命名、Ctrl+点击跳转定义，一并补齐。
+
+不用判断当前在哪个应用，两套习惯同时成立。
+
+### 和现有方案比
+
+| | LaterKey | Karabiner-Elements | 系统修饰键互换 |
+|---|---|---|---|
+| 虚拟 HID 驱动 | ❌ 不装 | ✅ 要装 DriverKit | ❌ 不装 |
+| 配置方式 | 托盘 / 设置面板点点点 | 手写 JSON 规则 | 只能两两互换 |
+| 终端中断键 | Win+C 独立保留 | 需自己配应用排除 | 与复制冲突 |
+| Alt+Tab / Win+L / 剪贴板历史 | 内置 | 自己找规则写 | 无 |
+| App 升级后 | 授权跨版本有效，配置不用重配 | 规则需自己维护 | — |
+
+> 从 Karabiner 迁移时请先退出并卸载它：两者都会改写按键，不能同时用。
 
 ## 安装
 
@@ -66,18 +94,18 @@ brew install --cask crazykun/ailater/laterkey
 
 ## 常见问题
 
+**为什么终端里中断按 Win+C？** 对调后物理 Ctrl 产生 ⌘、负责复制粘贴，物理 Win 产生 ⌃、正好承担终端的控制键角色。所以不用判断当前是不是终端，两套习惯同时成立。
+
 **为什么要授权两个权限？** 只有「辅助功能」是必须的（拦截按键、Dock 操作都靠它）。「监听事件 ListenEvent」是 macOS 15+ 的独立权限项，仅诊断用，不授权也不影响功能。
 
 **升级后要重新授权吗？** 不用。发布包用同一个自签名证书签名，辅助功能授权绑定证书身份，跨版本升级保持有效。
 
-**和 Karabiner 冲突吗？** 两者都会改写键盘事件，**不要同时用**。迁移到 LaterKey 后建议退出 Karabiner。
+**和 Karabiner 冲突吗？** 会。两者都会改写键盘事件，不要同时用。迁移前请先退出并卸载 Karabiner，并清掉系统的修饰键互换设置或 `hidutil` 映射，避免两层改键叠加。
 
-## 已知限制
+## 参与
 
-- Dock 开了图标放大或自动隐藏时，「再点最小化」未经验证；
-- 终端组/浏览器组的应用列表目前需手改 `~/.config/laterkey/config.toml`；
-- 更多计划见 [docs/ROADMAP.md](docs/ROADMAP.md)（快捷键速览等）。
+功能建议和 bug 走 [Issues](https://github.com/ailater/LaterKey/issues)，计划中的功能见 [ROADMAP](docs/ROADMAP.md)。
 
 ## License
 
-MIT
+MIT © 2026 AI Later
