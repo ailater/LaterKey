@@ -130,6 +130,8 @@ struct TrayApp {
     /// toggles，轮询发现不一致就刷新菜单勾选（设置面板改开关不经过
     /// TrayApp::apply，只靠菜单路径同步会漏）。
     synced: Option<Toggles>,
+    /// 全局快捷键唤出设置的序号（worker 推，GUI 轮询）
+    settings_seq_seen: u64,
 }
 
 impl TrayApp {
@@ -154,6 +156,7 @@ impl TrayApp {
             panel: None,
             panel_seq_seen: 0,
             synced: None,
+            settings_seq_seen: 0,
         }
     }
 
@@ -231,8 +234,20 @@ impl eframe::App for TrayApp {
                 .clone();
             if self.synced.as_ref() != Some(&current) {
                 tray.sync(&current);
+                tray.set_visible(!current.hide_tray_icon);
                 self.synced = Some(current);
             }
+        }
+
+        // 全局快捷键（Ctrl+Alt+K）唤出设置：与托盘「设置…」同一处理
+        let settings_seq = self
+            .shared
+            .settings_seq
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if settings_seq != self.settings_seq_seen {
+            self.settings_seq_seen = settings_seq;
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Focus);
         }
 
         // Win+V 是开关（toggle）：面板关着 → 呼出；开着 → 再按一次关闭。

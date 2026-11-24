@@ -445,7 +445,12 @@ impl eframe::App for SettingsApp {
                                 Tab::Keys => keys_section(ui, &mut toggles, &mut changed),
                                 Tab::Apps => apps_section(ui, &mut toggles, &mut changed),
                                 Tab::Mouse => mouse_section(ui, &mut toggles, &mut changed),
-                                Tab::About => about_section(ui, &mut auto_start_note),
+                                Tab::About => about_section(
+                                    ui,
+                                    &mut toggles,
+                                    &mut changed,
+                                    &mut auto_start_note,
+                                ),
                             }
                         }
                     });
@@ -553,6 +558,12 @@ fn keys_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
                 "Ctrl+Alt+Del 或 Ctrl+Esc 呼出强制退出",
                 &mut t.task_manager,
             );
+            *changed |= row(
+                ui,
+                "全局唤出设置面板",
+                "Ctrl+Alt+K 随时打开本面板（隐藏菜单栏图标后的恢复入口）",
+                &mut t.settings_hotkey,
+            );
         });
     });
 }
@@ -589,7 +600,12 @@ fn mouse_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
     });
 }
 
-fn about_section(ui: &mut egui::Ui, auto_start_note: &mut Option<String>) {
+fn about_section(
+    ui: &mut egui::Ui,
+    t: &mut Toggles,
+    changed: &mut bool,
+    auto_start_note: &mut Option<String>,
+) {
     // 开机自启不是按键规则，不进 Toggles——状态直接读 LaunchAgent plist。
     // 只写 plist 不立即 bootstrap：当前 GUI 持有实例锁，拉起第二个实例会
     // 抢锁失败并被 KeepAlive 反复重启；下次登录自然生效。
@@ -632,6 +648,14 @@ fn about_section(ui: &mut egui::Ui, auto_start_note: &mut Option<String>) {
                     .color(MUTED),
             );
             ui.add_space(6.0);
+            if row(
+                ui,
+                "隐藏菜单栏图标",
+                "隐藏后按 Ctrl+Alt+K 唤出本面板，在这里重新开启",
+                &mut t.hide_tray_icon,
+            ) {
+                *changed = true;
+            }
             if outline_button(ui, "打开配置目录").clicked() {
                 if let Some(path) = crate::toggles::path() {
                     if let Some(parent) = path.parent() {

@@ -14,6 +14,7 @@ pub const V: i64 = 0x09;
 pub const RETURN: i64 = 0x24;
 pub const TAB: i64 = 0x30;
 pub const SPACE: i64 = 0x31;
+pub const K: i64 = 0x28;
 pub const DELETE: i64 = 0x33;
 pub const ESCAPE: i64 = 0x35;
 

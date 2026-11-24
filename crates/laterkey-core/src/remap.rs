@@ -5,7 +5,7 @@
 
 use crate::flags::{self, ALTERNATE, ANY_MODIFIER, COMMAND, CONTROL, L_ALT};
 use crate::keys::{
-    self, DELETE, ESCAPE, L, LEFT, RIGHT, RIGHT_COMMAND, RIGHT_CONTROL, SPACE, TAB, V,
+    self, DELETE, ESCAPE, K, L, LEFT, RIGHT, RIGHT_COMMAND, RIGHT_CONTROL, SPACE, TAB, V,
 };
 
 /// 事件类型。修饰键没有 KeyDown/KeyUp，只有 FlagsChanged。
@@ -92,6 +92,8 @@ pub enum Action {
     LockScreen,
     /// 呼出 macOS 强制退出窗口（任务管理器对应物）
     TaskManager,
+    /// 全局快捷键唤出设置面板
+    OpenSettings,
 }
 
 /// 一组合成按键：键码 + 标志位。
@@ -141,6 +143,8 @@ pub struct Rules {
     pub win_key_clipboard: bool,
     /// 任务管理器：物理 Ctrl+Alt+Del(退格) 或物理 Ctrl+Esc 呼出强制退出
     pub task_manager: bool,
+    /// 全局快捷键：物理 Ctrl+Alt+K 唤出设置面板（隐藏托盘图标后的恢复入口）
+    pub settings_hotkey: bool,
     pub substitutes: Vec<Substitute>,
 }
 
@@ -155,6 +159,7 @@ impl Default for Rules {
             // Win+V 弹剪贴板历史面板；⌘V（Ctrl+V 改写来的）不受影响
             win_key_clipboard: true,
             task_manager: true,
+            settings_hotkey: true,
             substitutes: Vec::new(),
         }
     }
@@ -389,12 +394,21 @@ impl Remapper {
         // 6.5) 任务管理器（macOS 强制退出窗口）：物理 Ctrl+Alt+Del(退格) 或
         //      物理 Ctrl+Esc。同样用 raw 物理位判断，与改写无关；组合里不含
         //      物理 ⌘，不会被上面的 Win 键动作截走。
-        if self.rules.task_manager && ev.kind == Kind::KeyDown && !ev.repeat {
+        if ev.kind == Kind::KeyDown && !ev.repeat {
             // 修饰键必须精确等于（bare 是「含其中之一」，会把 Ctrl+退格 也吸进来）
             let mods = raw & ANY_MODIFIER;
-            let hit = (ev.keycode == DELETE && mods == CONTROL | ALTERNATE)
-                || (ev.keycode == ESCAPE && mods == CONTROL);
-            if hit {
+            if mods == CONTROL | ALTERNATE {
+                let action = match ev.keycode {
+                    DELETE if self.rules.task_manager => Some(Action::TaskManager),
+                    K if self.rules.settings_hotkey => Some(Action::OpenSettings),
+                    _ => None,
+                };
+                if let Some(action) = action {
+                    self.swallowed.push(ev.keycode);
+                    return Decision::Action(action);
+                }
+            }
+            if self.rules.task_manager && ev.keycode == ESCAPE && mods == CONTROL {
                 self.swallowed.push(ev.keycode);
                 return Decision::Action(Action::TaskManager);
             }
@@ -855,6 +869,27 @@ mod tests {
     }
 
     // ---------------- 终端与透传
+
+    #[test]
+    fn ctrl_alt_k_opens_settings_globally() {
+        let env = plain();
+        let mut r = Remapper::new(Rules::default());
+        assert_eq!(
+            r.on_input(Input::key_down(K, CTL_DOWN | ALT_DOWN), &env),
+            Decision::Action(Action::OpenSettings)
+        );
+        // 开关关闭后不再拦截，走正常的双向改写
+        let mut r = Remapper::new(Rules {
+            settings_hotkey: false,
+            ..Default::default()
+        });
+        r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &env);
+        let got = r.on_input(Input::key_down(K, CTL_DOWN | ALT_DOWN), &env);
+        assert!(
+            matches!(got, Decision::Rewrite { .. }),
+            "关闭后应改写，实际 {got:?}"
+        );
+    }
 
     #[test]
     fn release_all_emits_current_modifier_identities() {

@@ -353,6 +353,10 @@ fn handle(shared: &Shared, job: Job) {
             shared.panel_seq.fetch_add(1, Ordering::Relaxed);
             info("呼出剪贴板历史面板");
         }
+        Job::Action(laterkey_core::Action::OpenSettings) => {
+            shared.settings_seq.fetch_add(1, Ordering::Relaxed);
+            info("全局快捷键唤出设置面板");
+        }
         Job::Action(laterkey_core::Action::TaskManager) => {
             // 任务管理器 = macOS 强制退出窗口（⌘⌥Esc）。这个 WindowServer 热键
             // 不认用户态合成的 CGEvent——真机实测：完整修饰键手势序列（含

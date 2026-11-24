@@ -20,6 +20,7 @@ ctrl_arrows = true            # Ctrl+←/→/退格 按词跳转/删除（⌥）
 win_key_lock = true           # Win(⌘)+L 锁屏
 win_key_clipboard = true      # Win(⌘)+V 剪贴板历史面板：搜索历史、选中贴回
 task_manager = true           # Ctrl+Alt+Del 或 Ctrl+Esc 呼出强制退出窗口
+settings_hotkey = true          # Ctrl+Alt+K 全局唤出设置面板
 dock_click_minimize = true    # 再点一次前台应用的 Dock 图标 → 最小化
 
 # [apps] 不写就用内置列表：常见终端、浏览器、访达，以及整体不改的远程桌面/虚拟机。
@@ -85,6 +86,7 @@ pub struct RemapConfig {
     pub win_key_lock: bool,
     pub win_key_clipboard: bool,
     pub task_manager: bool,
+    pub settings_hotkey: bool,
     pub dock_click_minimize: bool,
 }
 
@@ -99,6 +101,7 @@ impl Default for RemapConfig {
             // Win+V 剪贴板历史面板默认开；只拦裸 Win+V，⌘V 粘贴不受影响
             win_key_clipboard: true,
             task_manager: true,
+            settings_hotkey: true,
             dock_click_minimize: true,
         }
     }
@@ -283,6 +286,7 @@ pub fn compile(cfg: &Config) -> Result<Compiled, String> {
             win_key_lock: cfg.remap.win_key_lock,
             win_key_clipboard: cfg.remap.win_key_clipboard,
             task_manager: cfg.remap.task_manager,
+            settings_hotkey: cfg.remap.settings_hotkey,
             substitutes,
         },
         groups,

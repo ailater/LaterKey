@@ -108,6 +108,8 @@ pub struct Shared {
     history: RwLock<Arc<[ClipboardEntry]>>,
     /// Win+V 呼出面板的信号：worker 收到动作 +1，GUI 轮询到变化就弹面板。
     pub panel_seq: AtomicU64,
+    /// 全局快捷键唤出设置面板的序号（GUI 轮询）
+    pub settings_seq: AtomicU64,
     /// 打开面板那一刻的前台应用 pid（GUI 快照），贴回的目标窗口。
     pub panel_target_pid: AtomicI32,
     /// 规则换过之后，拦截线程要把状态机重置一次（避免沿用旧规则的状态）
@@ -132,6 +134,7 @@ impl Shared {
             rules: RwLock::new(Rules::default()),
             history: RwLock::new(Arc::from(Vec::new())),
             panel_seq: AtomicU64::new(0),
+            settings_seq: AtomicU64::new(0),
             panel_target_pid: AtomicI32::new(0),
             tap_needs_reset: AtomicBool::new(false),
             jobs,

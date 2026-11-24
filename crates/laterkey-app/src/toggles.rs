@@ -18,6 +18,9 @@ pub struct Toggles {
     pub win_key_lock: bool,
     pub win_key_clipboard: bool,
     pub task_manager: bool,
+    pub settings_hotkey: bool,
+    /// 隐藏菜单栏图标（仅界面状态，不进规则编译；恢复入口 = Ctrl+Alt+K）
+    pub hide_tray_icon: bool,
     pub dock_click_minimize: bool,
     pub finder_f2: bool,
     pub browser_f5: bool,
@@ -35,6 +38,8 @@ impl Default for Toggles {
             // Win+V 剪贴板历史面板默认开；只拦裸 Win+V，⌘V 粘贴不受影响
             win_key_clipboard: true,
             task_manager: true,
+            settings_hotkey: true,
+            hide_tray_icon: false,
             dock_click_minimize: true,
             finder_f2: true,
             browser_f5: true,
@@ -80,6 +85,7 @@ pub fn apply(base: &Config, toggles: &Toggles) -> Result<Compiled, String> {
     cfg.remap.win_key_lock = toggles.master && toggles.win_key_lock;
     cfg.remap.win_key_clipboard = toggles.master && toggles.win_key_clipboard;
     cfg.remap.task_manager = toggles.master && toggles.task_manager;
+    cfg.remap.settings_hotkey = toggles.master && toggles.settings_hotkey;
     cfg.remap.dock_click_minimize = toggles.master && toggles.dock_click_minimize;
     cfg.substitute
         .retain(|sub| match sub.key.to_ascii_lowercase().as_str() {

@@ -23,6 +23,7 @@ const ITEMS: &[(&str, &str)] = &[
     ("win_key_lock", "Win+L 锁屏"),
     ("win_key_clipboard", "Win+V 剪贴板历史"),
     ("task_manager", "Ctrl+Alt+Del 任务管理器"),
+    ("settings_hotkey", "Ctrl+Alt+K 打开设置"),
     ("dock_click_minimize", "再点 Dock 图标最小化"),
     ("finder_f2", "访达里 F2 重命名"),
     ("browser_f5", "浏览器里 F5 刷新"),
@@ -87,6 +88,11 @@ impl Tray {
         })
     }
 
+    /// 显示/隐藏菜单栏图标（隐藏后用 Ctrl+Alt+K 唤出设置面板恢复）。
+    pub fn set_visible(&self, visible: bool) {
+        let _ = self._tray.set_visible(visible);
+    }
+
     /// 界面/后台改动后刷新勾选状态。
     pub fn sync(&self, toggles: &Toggles) {
         self.master.set_checked(toggles.master);
@@ -106,6 +112,7 @@ fn field(t: &Toggles, id: &str) -> bool {
         "win_key_lock" => t.win_key_lock,
         "win_key_clipboard" => t.win_key_clipboard,
         "task_manager" => t.task_manager,
+        "settings_hotkey" => t.settings_hotkey,
         "dock_click_minimize" => t.dock_click_minimize,
         "finder_f2" => t.finder_f2,
         "browser_f5" => t.browser_f5,
