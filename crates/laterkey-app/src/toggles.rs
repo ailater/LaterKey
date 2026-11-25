@@ -19,6 +19,8 @@ pub struct Toggles {
     pub win_key_clipboard: bool,
     pub task_manager: bool,
     pub settings_hotkey: bool,
+    /// 长按物理 Ctrl 3 秒呼出快捷键速览浮窗
+    pub shortcuts_peek: bool,
     /// 隐藏菜单栏图标（仅界面状态，不进规则编译；恢复入口 = Ctrl+Alt+K）
     pub hide_tray_icon: bool,
     pub dock_click_minimize: bool,
@@ -39,6 +41,7 @@ impl Default for Toggles {
             win_key_clipboard: true,
             task_manager: true,
             settings_hotkey: true,
+            shortcuts_peek: true,
             hide_tray_icon: false,
             dock_click_minimize: true,
             finder_f2: true,
@@ -86,6 +89,7 @@ pub fn apply(base: &Config, toggles: &Toggles) -> Result<Compiled, String> {
     cfg.remap.win_key_clipboard = toggles.master && toggles.win_key_clipboard;
     cfg.remap.task_manager = toggles.master && toggles.task_manager;
     cfg.remap.settings_hotkey = toggles.master && toggles.settings_hotkey;
+    cfg.remap.shortcuts_peek = toggles.master && toggles.shortcuts_peek;
     cfg.remap.dock_click_minimize = toggles.master && toggles.dock_click_minimize;
     cfg.substitute
         .retain(|sub| match sub.key.to_ascii_lowercase().as_str() {

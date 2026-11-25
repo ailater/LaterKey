@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use laterkey_core::{Action, Chord, ClipboardEntry, Decision, Env, Input, Kind, Remapper, Rules};
 
@@ -21,6 +21,7 @@ use super::cf::Cf;
 use super::dock::{self, DockDecision, Tile};
 use super::ffi::*;
 use super::post::OWN_TAG;
+use super::shortcuts::CheatSheet;
 
 const fn mask_bit(ty: u32) -> u64 {
     1u64 << (ty & 63)
@@ -114,6 +115,16 @@ pub struct Shared {
     pub panel_target_pid: AtomicI32,
     /// 规则换过之后，拦截线程要把状态机重置一次（避免沿用旧规则的状态）
     pub tap_needs_reset: AtomicBool,
+    /// 长按 Ctrl 速览手势：裸 Ctrl 按住的起点（毫秒时间戳，0=没在跟踪）。
+    /// 拦截线程写，worker 读并统一裁决触发/作废——回调里不能等 3 秒
+    pub peek_since: AtomicU64,
+    /// 快捷键速览浮窗的开窗请求序号（worker 手势 / 托盘菜单各 +1，GUI 轮询）
+    pub cheatsheet_seq: AtomicU64,
+    /// 触发过的长按「按住结束」次数（松开或作废），GUI 据此自动关掉手势开的浮窗
+    pub cheatsheet_release: AtomicU64,
+    /// 速览数据快照：读取线程写，GUI 读。version 变了才有新数据
+    cheatsheet: RwLock<Arc<CheatSheet>>,
+    pub cheatsheet_version: AtomicU64,
     tiles: RwLock<Arc<[Tile]>>,
     jobs: SyncSender<Job>,
     port: AtomicPtr<c_void>,
@@ -137,6 +148,11 @@ impl Shared {
             settings_seq: AtomicU64::new(0),
             panel_target_pid: AtomicI32::new(0),
             tap_needs_reset: AtomicBool::new(false),
+            peek_since: AtomicU64::new(0),
+            cheatsheet_seq: AtomicU64::new(0),
+            cheatsheet_release: AtomicU64::new(0),
+            cheatsheet: RwLock::new(Arc::new(CheatSheet::default())),
+            cheatsheet_version: AtomicU64::new(0),
             jobs,
             port: AtomicPtr::new(null_mut()),
             stats: Stats::default(),
@@ -162,6 +178,20 @@ impl Shared {
     /// worker 采到新内容（或清空）后发布快照。
     pub fn set_history(&self, entries: Vec<ClipboardEntry>) {
         *self.history.write().unwrap_or_else(|p| p.into_inner()) = entries.into();
+    }
+
+    /// 速览数据快照（可能是上一次的旧数据；GUI 以 version 判断是否新）。
+    pub fn cheatsheet(&self) -> Arc<CheatSheet> {
+        self.cheatsheet
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// 读取线程拿到新数据后发布，版本号 +1。
+    pub fn set_cheatsheet(&self, sheet: Arc<CheatSheet>) {
+        *self.cheatsheet.write().unwrap_or_else(|p| p.into_inner()) = sheet;
+        self.cheatsheet_version.fetch_add(1, Ordering::Relaxed);
     }
 
     /// 非阻塞投递：队列满了就丢（宁可少执行一次动作，也不能卡住回调）。
@@ -403,10 +433,52 @@ unsafe fn dispatch(ctx: &mut TapCtx, ty: u32, event: CGEventRef) -> CGEventRef {
 }
 
 impl TapCtx {
+    /// 长按 Ctrl 3 秒 → 快捷键速览的「按住起点」记录（含作废）。
+    ///
+    /// 这里只写一个时间戳，3 秒的等待由 worker 每轮裁决；期间敲任何键、
+    /// 按别的修饰键、点鼠标都算手势作废。速览不是组合键的前置。
+    ///
+    /// # Safety
+    ///
+    /// `event` 必须是类型为 `ty` 的有效键盘事件。
+    unsafe fn track_peek(&mut self, event: CGEventRef, ty: u32) {
+        if !self.opts.keys || !self.remapper.rules().shortcuts_peek {
+            return;
+        }
+        let modifiers = CGEventGetFlags(event) & laterkey_core::flags::ANY_MODIFIER;
+        let keycode = CGEventGetIntegerValueField(event, FIELD_KEYCODE);
+        let is_ctrl = keycode == laterkey_core::keys::CONTROL
+            || keycode == laterkey_core::keys::RIGHT_CONTROL;
+        match ty {
+            EVENT_FLAGS_CHANGED if is_ctrl => {
+                if modifiers == laterkey_core::flags::CONTROL {
+                    // 裸 Ctrl 按住：开始计时（已是 0 才写入，触发后不重复计）
+                    let _ = self.shared.peek_since.compare_exchange(
+                        0,
+                        unix_ms(),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    );
+                } else {
+                    // 松开、或按成了组合（⌃⇧ 等）：作废
+                    self.shared.peek_since.store(0, Ordering::Relaxed);
+                }
+            }
+            // 按住期间敲了任何键：作废
+            EVENT_KEY_DOWN | EVENT_KEY_UP => {
+                self.shared.peek_since.store(0, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+    }
+
     /// # Safety
     ///
     /// `event` 必须是类型为 `ty` 的有效键盘事件。
     unsafe fn on_key(&mut self, event: CGEventRef, ty: u32) -> CGEventRef {
+        // 长按 Ctrl 速览的计时起点（含作废判断）；放在最前，避免和后面的
+        // 共享借用冲突。规则刚换过时这里用的还是旧规则，差一个事件无碍
+        self.track_peek(event, ty);
         let shared = &self.shared;
         if shared.tap_needs_reset.swap(false, Ordering::SeqCst) {
             // 规则换了：状态机带着新规则重来，避免沿用旧规则的修饰键状态
@@ -446,6 +518,11 @@ impl TapCtx {
     /// `event` 必须是有效的左键事件（down/up/drag）。
     unsafe fn on_mouse(&mut self, event: CGEventRef, ty: u32) -> CGEventRef {
         let shared = &self.shared;
+
+        if ty == EVENT_LEFT_MOUSE_DOWN {
+            // Ctrl+点击是 ⌘+点击（跳定义/新标签），不是速览长按
+            self.shared.peek_since.store(0, Ordering::Relaxed);
+        }
 
         if ty == EVENT_LEFT_MOUSE_DOWN && self.opts.dock {
             let point = CGEventGetLocation(event);
@@ -504,6 +581,14 @@ impl TapCtx {
 }
 
 // ---------------------------------------------------------------- 生命周期
+
+/// 毫秒时间戳（peek 手势的按住起点）。
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 /// 已安装的拦截层。Drop 时停掉线程上的 RunLoop 并等它收尾。
 pub struct EventTap {

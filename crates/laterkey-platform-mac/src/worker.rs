@@ -27,6 +27,8 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const TILE_INTERVAL: Duration = Duration::from_secs(2);
 /// 贴回时等前台切回目标应用的上限。超时不贴——宁可不贴也不能贴错窗口。
 const PASTE_ACTIVATE_TIMEOUT: Duration = Duration::from_millis(1500);
+/// 长按 Ctrl 呼出快捷键速览的按住时长。
+const PEEK_HOLD_MS: u64 = 3000;
 
 pub struct Worker {
     shared: Arc<Shared>,
@@ -112,6 +114,8 @@ fn worker_loop(
     let mut last_change: u64 = 0;
     // 进行中的贴回：等前台切回目标应用（每轮循环推进一步，不阻塞整轮）
     let mut paste: Option<PasteBack> = None;
+    // 本轮长按 Ctrl 是否已触发过速览（松开时据此补一条结束信号给 GUI）
+    let mut peek_triggered = false;
 
     while !shared.stop.load(Ordering::SeqCst) {
         // 应用新规则：非阻塞地把通道里所有更新取完，用最后一份
@@ -195,6 +199,16 @@ fn worker_loop(
             });
         }
 
+        // 长按 Ctrl 速览：tap 只记「裸 Ctrl 按住的起点」，触发与松开在这里统一
+        // 裁决（每轮推进一步，不阻塞整轮循环）
+        step_peek(
+            &shared,
+            &mut peek_triggered,
+            cur_rules.shortcuts_peek,
+            secure,
+            now_ms(),
+        );
+
         // 剪贴板采集：规则开着且安全输入没开才采。停采期间只同步版本号——
         // 恢复时不回头采暂停期间拷的东西（那段可能有没带 Concealed 标记的密码）
         if capture_enabled(cur_rules.win_key_clipboard, secure) {
@@ -234,6 +248,32 @@ fn refresh_tiles(shared: &Shared) -> Instant {
 /// 与运行期开关更新共用这条判断。
 fn capture_enabled(win_key_clipboard: bool, secure_input: bool) -> bool {
     win_key_clipboard && !secure_input
+}
+
+/// 长按 Ctrl 速览手势的状态机（每轮推进一步）。
+///
+/// `peek_since` 由 tap 线程维护（裸 Ctrl 按住的起点，松开/作废清 0）；这里
+/// 负责到点触发、以及触发过的按住结束时给 GUI 补一条结束信号。规则中途
+/// 关闭或进入安全输入时立即作废——暂停期间 tap 看不到事件流，状态不可信。
+fn step_peek(shared: &Shared, triggered: &mut bool, enabled: bool, secure: bool, now_ms: u64) {
+    let since = shared.peek_since.load(Ordering::Relaxed);
+    if since != 0 && (!enabled || secure) {
+        // 作废：清掉起点，下一轮走「按住结束」分支补结束信号
+        shared.peek_since.store(0, Ordering::Relaxed);
+        return;
+    }
+    if since != 0 {
+        if !*triggered && now_ms.saturating_sub(since) >= PEEK_HOLD_MS {
+            *triggered = true;
+            shared.cheatsheet_seq.fetch_add(1, Ordering::Relaxed);
+            info("长按 Ctrl 3 秒，呼出快捷键速览");
+        }
+        return; // 还按着（无论触发与否），不结算
+    }
+    if *triggered {
+        *triggered = false;
+        shared.cheatsheet_release.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// 采集一次剪贴板：changeCount 变了才取内容，入库后发布快照给界面。
@@ -444,5 +484,70 @@ mod tests {
         let p = slot.take().unwrap();
         assert!(Instant::now() >= p.deadline);
         assert!(slot.is_none(), "超时后不再回到等待状态");
+    }
+
+    #[test]
+    fn peek_gesture_fires_once_and_reports_release() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared::new(tx, false));
+        let mut triggered = false;
+        let base = 1_000_000u64;
+
+        // 按住 1 秒：还没到阈值
+        shared.peek_since.store(base, Ordering::Relaxed);
+        step_peek(&shared, &mut triggered, true, false, base + 1000);
+        assert!(!triggered);
+        assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 0);
+
+        // 按住满 3 秒：触发一次
+        step_peek(&shared, &mut triggered, true, false, base + 3000);
+        assert!(triggered);
+        assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 1);
+
+        // 继续按着：不重复触发
+        step_peek(&shared, &mut triggered, true, false, base + 5000);
+        assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 1);
+
+        // 松开（tap 清零）：补结束信号
+        shared.peek_since.store(0, Ordering::Relaxed);
+        step_peek(&shared, &mut triggered, true, false, base + 6000);
+        assert!(!triggered);
+        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 1);
+
+        // 没触发过的短按结束：不补结束信号
+        shared.peek_since.store(base + 10_000, Ordering::Relaxed);
+        step_peek(&shared, &mut triggered, true, false, base + 11_000);
+        shared.peek_since.store(0, Ordering::Relaxed);
+        step_peek(&shared, &mut triggered, true, false, base + 12_000);
+        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn peek_gesture_cancels_when_disabled_or_secure() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared::new(tx, false));
+
+        // 规则中途关掉：起点立即清零
+        let mut triggered = false;
+        shared.peek_since.store(100, Ordering::Relaxed);
+        step_peek(&shared, &mut triggered, false, false, 4000);
+        assert_eq!(shared.peek_since.load(Ordering::Relaxed), 0);
+        assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 0);
+
+        // 触发之后才进安全输入：作废并补结束信号，浮窗随之关闭
+        let mut triggered = false;
+        shared.peek_since.store(100, Ordering::Relaxed);
+        step_peek(&shared, &mut triggered, true, false, 3100);
+        assert!(triggered, "先正常触发");
+        step_peek(&shared, &mut triggered, true, true, 3200);
+        assert_eq!(
+            shared.peek_since.load(Ordering::Relaxed),
+            0,
+            "安全输入作废按住"
+        );
+        step_peek(&shared, &mut triggered, true, true, 3300);
+        assert!(!triggered);
+        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 1);
     }
 }

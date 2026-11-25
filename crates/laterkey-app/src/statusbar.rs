@@ -14,6 +14,8 @@ use crate::toggles::Toggles;
 pub const QUIT_ID: &str = "quit";
 pub const SETTINGS_ID: &str = "settings";
 pub const ACCESSIBILITY_ID: &str = "accessibility";
+/// 手动呼出快捷键速览浮窗（长按 Ctrl 手势之外的入口）
+pub const PEEK_ID: &str = "peek_now";
 
 const ITEMS: &[(&str, &str)] = &[
     ("ctrl_as_cmd", "Ctrl 当作 ⌘（复制粘贴）"),
@@ -24,6 +26,7 @@ const ITEMS: &[(&str, &str)] = &[
     ("win_key_clipboard", "Win+V 剪贴板历史"),
     ("task_manager", "Ctrl+Alt+Del 任务管理器"),
     ("settings_hotkey", "Ctrl+Alt+K 打开设置"),
+    ("shortcuts_peek", "长按 Ctrl 显示快捷键速览"),
     ("dock_click_minimize", "再点 Dock 图标最小化"),
     ("finder_f2", "访达里 F2 重命名"),
     ("browser_f5", "浏览器里 F5 刷新"),
@@ -63,6 +66,8 @@ impl Tray {
         let _ = menu.append(&PredefinedMenuItem::separator());
         let settings = MenuItem::with_id(SETTINGS_ID, "设置…", true, None);
         let _ = menu.append(&settings);
+        let peek = MenuItem::with_id(PEEK_ID, "快捷键速览", true, None);
+        let _ = menu.append(&peek);
         let ax = MenuItem::with_id(ACCESSIBILITY_ID, "打开辅助功能授权", true, None);
         let _ = menu.append(&ax);
         let _ = menu.append(&PredefinedMenuItem::separator());
@@ -113,6 +118,7 @@ fn field(t: &Toggles, id: &str) -> bool {
         "win_key_clipboard" => t.win_key_clipboard,
         "task_manager" => t.task_manager,
         "settings_hotkey" => t.settings_hotkey,
+        "shortcuts_peek" => t.shortcuts_peek,
         "dock_click_minimize" => t.dock_click_minimize,
         "finder_f2" => t.finder_f2,
         "browser_f5" => t.browser_f5,
@@ -124,6 +130,8 @@ fn field(t: &Toggles, id: &str) -> bool {
 pub enum Action {
     Toggle(String, bool),
     OpenSettings,
+    /// 呼出快捷键速览浮窗
+    ShortcutsPeek,
     OpenAccessibility,
     Quit,
 }
@@ -133,6 +141,7 @@ pub fn translate(ev: &MenuEvent, toggles: &Arc<RwLock<Toggles>>) -> Option<Actio
     match id {
         QUIT_ID => Some(Action::Quit),
         SETTINGS_ID => Some(Action::OpenSettings),
+        PEEK_ID => Some(Action::ShortcutsPeek),
         ACCESSIBILITY_ID => Some(Action::OpenAccessibility),
         other => {
             let is_known = other == "master" || ITEMS.iter().any(|(k, _)| *k == other);

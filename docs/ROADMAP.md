@@ -8,44 +8,34 @@
 - [ ] **Dock 再点最小化**实测（9 项需求里最后一项未真机验证）。
 - [ ] **Karabiner 卸载**：配置已备份（`~/.config/karabiner/karabiner.json.bak-laterkey-*`、`/tmp/karabiner-backup-before-uninstall-*.json`）。用户级 profile 已切到空映射 `laterkey-test-off`；root 服务与 DriverKit 扩展的移除命令需用户用 sudo 执行。
 
-## P1 · 快捷键速览 + 物理键映射对照（2026-11-23 用户提出）
+## P1 · 快捷键速览 + 物理键映射对照（2026-11-23 用户提出；2026-11-25 已实现）
 
-> 参照用户给的 CheatSheet 式截图：左栏当前应用的全部菜单快捷键，右栏系统快捷键（调度中心/键盘/输入法/屏幕快照/聚焦/辅助功能等）。LaterKey 的特色是**一键切换显示口径**：
->
-> | 显示口径 | 「拷贝」显示为 | 「锁屏」显示为 |
-> |---|---|---|
-> | Mac 符号 | ⌘C | ⌃⌘Q |
-> | **物理键（Ctrl/Win/Alt）** | **Ctrl+C** | **Win+Ctrl+Q** |
->
-> 因为我们的互换模型：物理 Ctrl 产生 ⌘、物理 Win 产生 ⌃。用户看快捷键提示时想知道的是「我这只 Windows 键盘上该按什么」。
+### 待执行工作流（2026-11-25 晚更新；W1–W3/W6 已完成，剩 W4/W5）
 
-### 数据源（2026-11-23 本机只读探测已验证）
+> 2026-11-25 晚进展：**W1 查出「面板撑不起全高」的真根因**——egui 0.35 的
+> `ui.horizontal()` 只分配 `interact_size.y`（18px）高，内部 `available_height()`
+> 恒为 18，此前 `Frame+set_min_height` 与 `ui.scope` 两版都栽在同一根因上；
+> 已改 `allocate_ui_with_layout` 显式分配全高，并加**无头布局测试**锁定回归
+> （`begin_pass/end_pass + tessellate` 对图元做几何断言，锁屏/无 GPU 也能跑）。
+> 期间屏幕锁定无法截屏，像素级自检截图（ui4/ui5）本身也证实了缺陷（面板底
+> 只到内容高度）。
 
-1. **当前应用快捷键**：辅助功能 API 遍历菜单栏。`AXApplication → AXMenuBar → AXChildren（各菜单）→ AXChildren（菜单项）`，菜单项上读：
-   - `AXTitle`：名称；
-   - `AXMenuItemCmdChar`：快捷键字符（`C`、`V`、`⎋`…）；
-   - `AXMenuItemCmdModifiers`：修饰键掩码。实测含义：**0=⌘，1=⇧⌘，2=⌥⌘，3=⇧⌥⌘，4=⌃⌘，24=fn**（如「开始听写 fn+D」）。是位掩码：bit0=⇧、bit1=⌥、bit2=⌃，⌘ 为默认基底，fn 另有一套编码；
-   - `AXMenuItemCmdVirtualKey`：虚拟键码（部分项有，如 Esc=53）。
-   - 实测 App Cleaner 的菜单完整可读（8 个菜单、含 Apple 菜单的强制退出/锁屏/退出登录）。**待测**：Electron 类应用（ZCode/VS Code）的菜单 AX 可读性。
-2. **系统快捷键**：`~/Library/Preferences/com.apple.symbolichotkeys.plist` 的 `AppleSymbolicHotKeys` 字典。每条 `{enabled, value:{parameters:[字符, 虚拟键码, 修饰键]}}`，修饰键是 CGEventFlags 风格（⇧0x20000、⌃0x40000、⌥0x80000、⌘0x100000）。实测可读：聚焦搜索 = Space+0x100000 = ⌘Space、向左/右移动空间 = ⌃←/⌃→ 等。
-   - **注意**：实施时用 CFPreferences（cfprefsd 实时值）而不是直接读文件——直接读 plist 可能拿到落盘延迟的旧值。
-   - id→名称对照表需内置（32=调度中心、33=应用程序窗口、36=显示桌面、64=聚焦搜索、65=访达搜索、60/61=移动空间、160=启动台、118/119=切换桌面 1/2…），plist 里只有 id 没有名字。
+- [x] **W1 · 布局核对**：无头测试证实修复后面板底从控件行下方铺到窗口底部（628px/660）；行快捷键不叠压、右上角迷你控件正常已由截图确认。**待补**：屏幕解锁后对部署实例做一次真机视觉复核（合成手势抓窗）。
+- [x] **W2 · 清理临时验证产物**：`src/bin/cheatsheet_stress.rs` 已删（含目录）、`gui.rs` 的 `run_event_loop` 已改回私有、`/tmp` 探针与截图已清。
+- [x] **W3 · 全量门禁**：fmt / clippy(-D warnings) / test(135 通过) / release build 全绿。
+- [ ] **W4 · 真机手势验收**（用户侧）：长按 Ctrl 3 秒弹出、松开即消失；期间敲键/点鼠标不触发；托盘菜单「快捷键速览」手动呼出 + × 关闭；两种口径切换内容正确（⌘C↔Ctrl+C）。
+- [ ] **W5 · 提交发版**：验收后升版本号、打 tag、走 Release + cask 流程（提交随本次先落 main）。
+- [x] **W6 · 托盘勾选缺陷**：`gui.rs` 的 `set_field` 已补 `task_manager` / `settings_hotkey` 分支（字段名与 statusbar.rs 菜单表一致）。
 
-### 显示切换的转换规则
+- 部署注意（2026-11-25 实测）：`package-macos.sh --install` 的 bootout 可能把旧实例变成**孤儿进程**（launchd 不再管理但进程存活，仍持有实例锁）→ 新实例启动即干净退出、`KeepAlive SuccessfulExit=false` 不重启，表现为「装完没生效」。处理：`kill` 孤儿进程 + `launchctl kickstart -k gui/$(id -u)/io.github.crazykun.laterkey`。
 
-按当前 toggles 决定怎么换算（开关不同，显示就不同）：
-- `ctrl_as_cmd` 开：⌘ → 显示为 **Ctrl**；
-- `cmd_as_ctrl` 开：⌃ → 显示为 **Win**；
-- ⌥ → 显示为 **Alt**（恒等，macOS 上物理 Alt 就是 ⌥）；
-- 两者同时出现的组合（如 ⌃⌘Q）按位各自换算：Win+Ctrl+Q；
-- Alt+Tab 特例：⌘Tab 在切换器语境显示为 Alt+Tab（左 Alt+Tab 被映射成 ⌘Tab）。
-
-### 工程拆分
-
-- `laterkey-core`：快捷键条目模型（标题/字符/虚拟键码/修饰键）、Mac↔物理键的显示换算（纯函数，可单测）；
-- `laterkey-platform-mac`：AX 菜单遍历、symbolic hotkeys 读取（CFPreferences）；
-- `laterkey-app`：egui 速览窗口（两栏：当前应用 / 系统，分组小标题）、顶部切换器（Mac 符号 / 物理键）、托盘菜单入口「快捷键速览」；
-- 触发方式待定：托盘菜单项先行；是否支持「长按物理 Ctrl 弹出」（CheatSheet 是长按 ⌘）需要拦截层加一个「按住超过阈值且期间无其他键」的手势，单独评估。
+- [x] 已实现（2026-11-25）：左栏当前应用全部菜单快捷键（AX 遍历），右栏系统快捷键（symbolichotkeys），顶部「物理键 / Mac 原生」口径切换（egui 面板用文字不用键帽符号，见字体定案）。**触发 = 长按物理 Ctrl 3 秒**（期间敲键/点鼠标即作废，松开即关；tap 只记按住起点，worker 每轮裁决）+ 托盘菜单「快捷键速览」手动入口；浮窗 with_active(false) 不抢前台焦点，关闭只隐藏视口（同 Win+V 面板的 CGL 教训）。设置面板「按键映射」与托盘菜单各有一个开关（`shortcuts_peek`）。
+- 实施中的真机发现（2026-11-25，本机 macOS 27.2）：
+  - **Electron 应用（ZCode/飞书）默认不暴露 AX 树**：`AXMenuBar` 读不到，必须先对 AX 应用元素置 `AXManualAccessibility = true` 才读得到，且树是异步构建的——首次失败延时 300ms 重试一次（shortcuts.rs）。
+  - **菜单树结构**：菜单栏子项（如「文件」）下挂的是 `AXMenu` 元素，菜单项在 AXMenu 的 AXChildren 里；只展开一层子菜单（`父 › 子`），条目平铺进父组。
+  - **60/61 对照修正**：实测是输入法切换（选择上一个/下一个输入法），不是 ROADMAP 旧文写的「移动空间」；移动空间是 79/81。
+  - 系统快捷键只列内置表认识且已启用的 id（CFPreferences 实时值）；本机 plist 里没有截屏组（28–31/184）条目，属正常——未启用或未落盘的不显示。
+- 剩余缺口（低优先）：系统快捷键只覆盖内置表认识的 id（未知 id 不显示，宁缺勿错）；口径选择不跨会话记忆（每次打开回到物理键口径）。
 
 ## P2 · 剪贴板历史（Win+V）
 

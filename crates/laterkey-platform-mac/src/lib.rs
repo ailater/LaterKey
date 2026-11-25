@@ -22,6 +22,8 @@ mod pasteboard;
 #[cfg(target_os = "macos")]
 mod post;
 #[cfg(target_os = "macos")]
+mod shortcuts;
+#[cfg(target_os = "macos")]
 mod tap;
 #[cfg(target_os = "macos")]
 mod worker;
@@ -37,6 +39,8 @@ pub use focus::{
 };
 #[cfg(target_os = "macos")]
 pub use lock::{immediate_available, lock_screen, LockMethod};
+#[cfg(target_os = "macos")]
+pub use shortcuts::{read_cheatsheet, CheatSheet};
 #[cfg(target_os = "macos")]
 pub use tap::{decide_key, Effect, EventTap, Job, Outcome, Shared, Stats, TapOptions, Trace};
 #[cfg(target_os = "macos")]

@@ -11,6 +11,7 @@ pub mod config;
 pub mod flags;
 pub mod keys;
 pub mod remap;
+pub mod shortcuts;
 
 pub use clipboard::{
     png_dimensions, ClipboardEntry, History, ImageData, ImageFormat, MAX_ENTRIES, MAX_IMAGE_BYTES,
@@ -18,3 +19,7 @@ pub use clipboard::{
 };
 pub use config::{compile, parse, parse_chord, Compiled, Config, GroupTable};
 pub use remap::{groups, Action, Chord, Decision, Env, Input, Kind, Remapper, Rules, Substitute};
+pub use shortcuts::{
+    ax_modifiers_to_flags, format_chord, normalize_char, virtual_key_name, DisplayRules,
+    ShortcutEntry, ShortcutGroup, ShortcutKey, Style,
+};

@@ -13,9 +13,10 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use laterkey_core::{Config, GroupTable, Rules};
+use laterkey_core::{Config, DisplayRules, GroupTable, Rules};
 use laterkey_platform_mac::PanelCommand;
 
+use crate::cheatsheet::CheatSheetView;
 use crate::clipboard_panel::Panel;
 use crate::settings::SettingsApp;
 use crate::statusbar::{self, Action, Tray};
@@ -128,6 +129,10 @@ struct TrayApp {
     panel: Option<Panel>,
     panel_open: bool,
     panel_seq_seen: u64,
+    /// 快捷键速览浮窗：长按 Ctrl 手势 / 托盘菜单呼出。同 panel 的保留策略。
+    cheatsheet: Option<CheatSheetView>,
+    cheatsheet_open: bool,
+    cheatsheet_seq_seen: u64,
     /// 已同步到托盘菜单勾选的开关状态：面板/菜单/热加载任何路径改了
     /// toggles，轮询发现不一致就刷新菜单勾选（设置面板改开关不经过
     /// TrayApp::apply，只靠菜单路径同步会漏）。
@@ -158,6 +163,9 @@ impl TrayApp {
             panel: None,
             panel_open: false,
             panel_seq_seen: 0,
+            cheatsheet: None,
+            cheatsheet_open: false,
+            cheatsheet_seq_seen: 0,
             synced: None,
             settings_seq_seen: 0,
         }
@@ -180,6 +188,12 @@ impl TrayApp {
 }
 
 impl eframe::App for TrayApp {
+    // 速览浮窗是透明无边框窗口：清屏必须全透明，自绘圆角外才露出桌面。
+    // 其余窗口都有不透明填充盖满整窗，不受影响
+    fn clear_color(&self, _visuals: &eframe::egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     // 菜单轮询、关闭拦截、退出命令全放 logic()：窗口被隐藏（macOS orderOut → Occluded）
     // 后 eframe glow 不再调用 ui()（run_ui 由 info.occluded 决定），但 logic() 无条件执行，
     // 托盘才能在窗口收起时继续响应、退出路径也保持可用。
@@ -198,6 +212,11 @@ impl eframe::App for TrayApp {
                     Action::OpenSettings => {
                         ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(true));
                         ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Focus);
+                    }
+                    Action::ShortcutsPeek => {
+                        self.shared
+                            .cheatsheet_seq
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     Action::OpenAccessibility => statusbar::open_accessibility(),
                     Action::Quit => {
@@ -303,6 +322,49 @@ impl eframe::App for TrayApp {
             panel.show(ctx, self.panel_open);
         }
 
+        // 快捷键速览：长按 Ctrl 手势 / 托盘菜单推进 seq；手势按住结束推进
+        // release（浮窗据此自动关）。视口同 panel 的保留策略：关闭只隐藏
+        let peek_seq = self
+            .shared
+            .cheatsheet_seq
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if peek_seq != self.cheatsheet_seq_seen {
+            self.cheatsheet_seq_seen = peek_seq;
+            // peek_since 非 0 = 手势按住中开的窗（松开自动关）；菜单开的不受影响
+            let gesture = self
+                .shared
+                .peek_since
+                .load(std::sync::atomic::Ordering::Relaxed)
+                != 0;
+            let release = self
+                .shared
+                .cheatsheet_release
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let pid = self
+                .shared
+                .front_pid
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let view = self
+                .cheatsheet
+                .get_or_insert_with(|| CheatSheetView::new(self.shared.clone()));
+            view.prepare_open(gesture, release);
+            self.cheatsheet_open = true;
+            // AX 读菜单可能上百毫秒：后台线程读，浮窗先显示旧数据/读取中
+            crate::cheatsheet::fetch_in_background(self.shared.clone(), pid);
+            ctx.request_repaint();
+        }
+        if let Some(view) = &self.cheatsheet {
+            if self.cheatsheet_open && view.close_requested() {
+                self.cheatsheet_open = false;
+            }
+            let t = self.toggles.read().unwrap_or_else(|p| p.into_inner());
+            let display = DisplayRules {
+                ctrl_as_cmd: t.ctrl_as_cmd,
+                cmd_as_ctrl: t.cmd_as_ctrl,
+            };
+            view.show(ctx, self.cheatsheet_open, display);
+        }
+
         // 菜单事件要能被及时看到：低频轮询（窗口隐藏时也保持）
         ctx.request_repaint_after(Duration::from_millis(200));
     }
@@ -344,6 +406,9 @@ fn set_field(t: &mut Toggles, field: &str, value: bool) {
         "ctrl_arrows" => t.ctrl_arrows = value,
         "win_key_lock" => t.win_key_lock = value,
         "win_key_clipboard" => t.win_key_clipboard = value,
+        "task_manager" => t.task_manager = value,
+        "settings_hotkey" => t.settings_hotkey = value,
+        "shortcuts_peek" => t.shortcuts_peek = value,
         "dock_click_minimize" => t.dock_click_minimize = value,
         "finder_f2" => t.finder_f2 = value,
         "browser_f5" => t.browser_f5 = value,

@@ -121,9 +121,10 @@ fn run_remap(
     let (tx, rx) = mpsc::sync_channel(64);
     let shared = Arc::new(mac::Shared::new(tx, verbose));
     // CLI 模式下规则不热更新、也没有剪贴板面板：两个通道的发送端立刻丢弃。
-    // 没有面板就别拦 Win+V——拦了等于白丢一个粘贴键
+    // 没有面板就别拦 Win+V——拦了等于白丢一个粘贴键；速览浮窗同理（无 GUI 可显示）
     let mut rules = compiled.rules.clone();
     rules.win_key_clipboard = false;
+    rules.shortcuts_peek = false;
     let (_update_tx, update_rx) = mpsc::channel();
     let (_panel_tx, panel_rx) = mpsc::channel();
     let worker = mac::Worker::start(
@@ -392,6 +393,7 @@ fn key_rules(rules: &Rules) -> Vec<(&'static str, bool)> {
         ("Ctrl+←/→/退格 按词跳转/删除（⌥）", rules.ctrl_arrows),
         ("Win(⌘)+L 锁屏", rules.win_key_lock),
         ("Win(⌘)+V 剪贴板历史", rules.win_key_clipboard),
+        ("长按 Ctrl 3 秒呼出快捷键速览", rules.shortcuts_peek),
     ]
 }
 

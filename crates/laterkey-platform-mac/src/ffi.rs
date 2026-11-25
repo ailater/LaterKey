@@ -160,6 +160,8 @@ extern "C" {
         key_callbacks: *const CFDictionaryKeyCallBacks,
         value_callbacks: *const CFDictionaryValueCallBacks,
     ) -> CFTypeRef;
+    // 走 cfprefsd 的实时值（系统快捷键可能被用户改过，直接读 plist 会拿到落盘延迟的旧值）
+    pub fn CFPreferencesCopyAppValue(key: CFStringRef, application_id: CFStringRef) -> CFTypeRef;
 }
 
 /// CFDictionary 的 callbacks 是 opaque 结构体，只取地址、不访问字段。
