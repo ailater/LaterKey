@@ -48,7 +48,7 @@ struct PanelState {
     focus_until: Option<Instant>,
     /// 键盘移动过选中项：这一帧把选中项滚进视野。
     scrolled: bool,
-    /// 回调请求关闭（Esc/失焦/红点/贴回），TrayApp 看到就停注册，视口随之销毁。
+    /// 回调请求关闭（Esc/失焦/红点/贴回），TrayApp 看到后隐藏视口。
     close: bool,
     /// 过滤缓存：搜索词或历史快照变了才重算。存过滤后条目在快照里的下标。
     last_query: String,
@@ -60,7 +60,8 @@ struct PanelState {
     textures: HashMap<u64, egui::TextureHandle>,
 }
 
-/// 面板句柄。TrayApp 持有，开着时每帧调一次 [`Panel::show`]。
+/// 面板句柄。首次打开后 TrayApp 一直持有，每帧调一次 [`Panel::show`]；
+/// 关闭只隐藏，不销毁原生视口。
 #[derive(Clone)]
 pub struct Panel {
     inner: Arc<Inner>,
@@ -85,8 +86,14 @@ impl Panel {
         }
     }
 
+    /// 每次打开都是新会话；原生视口复用，但搜索、选中与焦点状态不带上一次。
+    pub fn prepare_open(&self) {
+        *self.inner.state.lock().unwrap_or_else(|p| p.into_inner()) = PanelState::default();
+    }
+
     /// 每帧注册视口（不注册的那一帧 egui 就把窗口收走）。
-    pub fn show(&self, ctx: &egui::Context) {
+    /// 关闭时继续注册并设 visible=false，保留 CGL context 绑定的 NSView。
+    pub fn show(&self, ctx: &egui::Context, visible: bool) {
         let panel = self.clone();
         ctx.show_viewport_deferred(
             viewport_id(),
@@ -94,13 +101,14 @@ impl Panel {
                 .with_inner_size(SIZE)
                 .with_title("剪贴板历史")
                 .with_resizable(false)
-                .with_always_on_top(),
+                .with_always_on_top()
+                .with_visible(visible),
             move |ui, _class| panel.draw(ui),
         );
     }
 
     /// 再按一次 Win+V 的 toggle 关闭：与 Esc/失焦/红点同一条关闭路径，
-    /// TrayApp 下一帧看到 close_requested 就停注册，视口随之销毁。
+    /// TrayApp 看到 close_requested 后隐藏视口。
     pub fn request_close(&self) {
         self.inner
             .state
@@ -109,7 +117,7 @@ impl Panel {
             .close = true;
     }
 
-    /// 回调请求关闭：TrayApp 检查后停注册。
+    /// 回调请求关闭：TrayApp 检查后隐藏视口。
     pub fn close_requested(&self) -> bool {
         self.inner
             .state

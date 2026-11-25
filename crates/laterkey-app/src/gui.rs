@@ -123,8 +123,10 @@ struct TrayApp {
     /// 已明确要退出（托盘「退出」或后台 stop），下一次 close_requested 不再拦截。
     quit_requested: bool,
     inner: Option<SettingsApp>,
-    /// Win+V 呼出面板：worker 推 panel_seq，这里轮询。None = 面板关着。
+    /// Win+V 呼出面板：worker 推 panel_seq，这里轮询。
+    /// 首次打开后一直保留（包括隐藏时），避免反复销毁 CGL 视口。
     panel: Option<Panel>,
+    panel_open: bool,
     panel_seq_seen: u64,
     /// 已同步到托盘菜单勾选的开关状态：面板/菜单/热加载任何路径改了
     /// toggles，轮询发现不一致就刷新菜单勾选（设置面板改开关不经过
@@ -154,6 +156,7 @@ impl TrayApp {
             quit_requested: false,
             inner: None,
             panel: None,
+            panel_open: false,
             panel_seq_seen: 0,
             synced: None,
             settings_seq_seen: 0,
@@ -258,28 +261,31 @@ impl eframe::App for TrayApp {
             .load(std::sync::atomic::Ordering::Relaxed);
         if seq != self.panel_seq_seen {
             self.panel_seq_seen = seq;
-            match &self.panel {
-                Some(panel) => panel.request_close(),
-                None => {
-                    // 先快照前台 pid：面板一激活，前台就变成 LaterKey 自己了。
-                    // worker 贴回时要的就是这个快照
-                    let pid = self
-                        .shared
-                        .front_pid
-                        .load(std::sync::atomic::Ordering::Relaxed);
-                    self.shared
-                        .panel_target_pid
-                        .store(pid, std::sync::atomic::Ordering::Relaxed);
-                    self.panel = Some(Panel::new(self.panel_tx.clone(), self.shared.clone()));
-                    ctx.request_repaint();
+            if self.panel_open {
+                if let Some(panel) = &self.panel {
+                    panel.request_close();
                 }
+            } else {
+                // 先快照前台 pid：面板一激活，前台就变成 LaterKey 自己了。
+                // worker 贴回时要的就是这个快照
+                let pid = self
+                    .shared
+                    .front_pid
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                self.shared
+                    .panel_target_pid
+                    .store(pid, std::sync::atomic::Ordering::Relaxed);
+                let panel = self
+                    .panel
+                    .get_or_insert_with(|| Panel::new(self.panel_tx.clone(), self.shared.clone()));
+                panel.prepare_open();
+                self.panel_open = true;
+                ctx.request_repaint();
             }
         }
-        // 开着就每帧注册一次视口；回调请求关闭后停注册，egui 随即收走窗口
         if let Some(panel) = &self.panel {
-            panel.show(ctx);
-            if panel.close_requested() {
-                self.panel = None;
+            if self.panel_open && panel.close_requested() {
+                self.panel_open = false;
                 // 焦点还给打开面板前的应用：面板激活过 LaterKey，若设置窗口
                 // 之前开过会被一起带到前台；Esc/再按 Win+V 关闭后必须把原应用
                 // 拉回来，否则设置窗口就残留在最前面（贴回路径 worker 也激活
@@ -292,6 +298,9 @@ impl eframe::App for TrayApp {
                     laterkey_platform_mac::activate_pid(pid);
                 }
             }
+            // 隐藏时也持续注册同一视口：销毁其 NSView 后再复用 GL context，
+            // glutin CGL 会在 is_view_current 的 expect 处 panic（Win+V 连按崩溃）。
+            panel.show(ctx, self.panel_open);
         }
 
         // 菜单事件要能被及时看到：低频轮询（窗口隐藏时也保持）
@@ -339,5 +348,53 @@ fn set_field(t: &mut Toggles, field: &str, value: bool) {
         "finder_f2" => t.finder_f2 = value,
         "browser_f5" => t.browser_f5 = value,
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    fn test_app() -> TrayApp {
+        let (jobs_tx, _jobs_rx) = mpsc::sync_channel(1);
+        let shared = Arc::new(laterkey_platform_mac::Shared::new(jobs_tx, false));
+        let (update_tx, _update_rx) = mpsc::channel();
+        let (_menu_tx, menu_rx) = mpsc::channel();
+        let (panel_tx, _panel_rx) = mpsc::channel();
+        TrayApp::new(
+            Arc::new(RwLock::new(Toggles::default())),
+            update_tx,
+            Config::default(),
+            shared,
+            menu_rx,
+            panel_tx,
+        )
+    }
+
+    fn press_win_v(app: &mut TrayApp, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
+        app.shared.panel_seq.fetch_add(1, Ordering::Relaxed);
+        ctx.begin_pass(Default::default());
+        eframe::App::logic(app, ctx, frame);
+        let _ = ctx.end_pass();
+    }
+
+    #[test]
+    fn repeated_win_v_reuses_the_panel_viewport() {
+        let mut app = test_app();
+        let ctx = eframe::egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+
+        for _ in 0..20 {
+            press_win_v(&mut app, &ctx, &mut frame);
+            let panel = app.panel.as_ref().expect("Win+V 应打开面板");
+            assert!(!panel.close_requested(), "重开时必须清掉旧的关闭请求");
+
+            press_win_v(&mut app, &ctx, &mut frame);
+            assert!(
+                app.panel.is_some(),
+                "关闭只能隐藏视口；销毁后重建会让 glutin CGL 持有失效的 view"
+            );
+        }
     }
 }
