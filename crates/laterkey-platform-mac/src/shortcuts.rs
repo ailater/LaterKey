@@ -293,6 +293,27 @@ const KNOWN_HOTKEYS: &[(i64, &str, &str, u64, i64)] = &[
     (184, "屏幕快照", "截屏和录制选项", SHIFT | COMMAND, 0x17), // 5
     (64, "聚焦", "聚焦搜索", COMMAND, keys::SPACE),
     (65, "聚焦", "访达搜索", ALTERNATE | COMMAND, keys::SPACE),
+    // 参考工具中的系统键盘/辅助功能组：部分 id 不在 symbolic hotkeys plist，
+    // 按 macOS 默认键位兜底展示，避免系统区因配置未落盘而出现大块空白。
+    (201, "键盘", "将焦点移到菜单栏", CONTROL, 0x7A),
+    (202, "键盘", "将焦点移到 Dock", CONTROL, 0x63),
+    (203, "键盘", "将焦点移到活跃窗口或新窗口", CONTROL, 0x76),
+    (204, "键盘", "将焦点移到状态菜单", COMMAND, 0x64),
+    (
+        205,
+        "键盘",
+        "显示/隐藏手写输入",
+        SHIFT | CONTROL,
+        keys::SPACE,
+    ),
+    (206, "辅助功能", "打开或关闭缩放", ALTERNATE | COMMAND, 0x67),
+    (
+        207,
+        "辅助功能",
+        "反转颜色",
+        CONTROL | ALTERNATE | COMMAND,
+        0x67,
+    ),
 ];
 
 /// symbolic hotkeys 的修饰键掩码是 CGEventFlags 风格；只留类别位，
