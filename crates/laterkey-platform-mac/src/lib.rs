@@ -40,6 +40,8 @@ pub use focus::{
 #[cfg(target_os = "macos")]
 pub use lock::{immediate_available, lock_screen, LockMethod};
 #[cfg(target_os = "macos")]
+pub use post::trigger_chord;
+#[cfg(target_os = "macos")]
 pub use shortcuts::{read_cheatsheet, CheatSheet};
 #[cfg(target_os = "macos")]
 pub use tap::{decide_key, Effect, EventTap, Job, Outcome, Shared, Stats, TapOptions, Trace};

@@ -32,8 +32,8 @@
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use egui::{Align2, Color32, FontId, ViewportBuilder, ViewportId};
-use laterkey_core::{DisplayRules, ShortcutGroup, Style};
+use egui::{Align2, Color32, FontId, Key, ViewportBuilder, ViewportId};
+use laterkey_core::{CheatsheetConfig, DisplayRules, ShortcutGroup, ShortcutKey, Style};
 use laterkey_platform_mac::Shared;
 
 use crate::settings::MUTED;
@@ -83,6 +83,12 @@ fn viewport_id() -> ViewportId {
 
 #[derive(Default)]
 struct CheatState {
+    /// 视觉字号配置（来自 config.toml 的 [cheatsheet]）。
+    visual: CheatsheetConfig,
+    /// 浮窗曾经获得过焦点；用于识别点击外部后的失焦关闭。
+    was_focused: bool,
+    /// 点击快捷键后关闭并执行
+    target_pid: i32,
     /// 显示口径（本会话内切换）
     style: Style,
     /// 回调请求关闭（手势松开 / × 按钮）
@@ -111,13 +117,15 @@ struct Inner {
 }
 
 impl CheatSheetView {
-    pub fn new(shared: Arc<Shared>) -> Self {
+    pub fn new(shared: Arc<Shared>, visual: CheatsheetConfig) -> Self {
         let version = shared
             .cheatsheet_version
             .load(std::sync::atomic::Ordering::Relaxed);
         Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(CheatState {
+                    visual,
+                    target_pid: 0,
                     data: shared.cheatsheet(),
                     data_seen: version,
                     ..Default::default()
@@ -130,7 +138,7 @@ impl CheatSheetView {
     /// 每次打开都是新会话：口径回 Mac 原生（键帽符号，对齐参考工具）、清除
     /// 关闭标记；`gesture` 标记本次是长按手势开的（松开自动关），托盘菜单开
     /// 的不随 Ctrl 松开关窗。
-    pub fn prepare_open(&self, gesture: bool, release_now: u64) {
+    pub fn prepare_open(&self, target_pid: i32, release_now: u64) {
         let mut st = self.lock();
         let version = self
             .inner
@@ -138,8 +146,9 @@ impl CheatSheetView {
             .cheatsheet_version
             .load(std::sync::atomic::Ordering::Relaxed);
         st.style = Style::Mac;
+        st.target_pid = target_pid;
         st.close = false;
-        st.auto_close = gesture;
+        st.auto_close = false;
         st.release_seen = release_now;
         st.open_version = version;
         st.data_seen = version;
@@ -154,8 +163,8 @@ impl CheatSheetView {
                 .with_inner_size(SIZE)
                 .with_resizable(false)
                 .with_always_on_top()
-                // 不抢前台焦点：原应用继续接收按键，松开 Ctrl 即回原状
-                .with_active(false)
+                // 需要接收点击、Esc 和失焦事件：弹窗不再依赖 Ctrl 松开关闭。
+                .with_active(true)
                 // 无边框 + 透明：面板直接悬浮（键指如飞式）
                 .with_decorations(false)
                 .with_transparent(true)
@@ -179,16 +188,14 @@ impl CheatSheetView {
         let shared = &self.inner.shared;
         let mut st = self.lock();
 
-        // 手势开的窗：对应的那次按住结束（松开/作废）就自动关
-        if st.auto_close
-            && shared
-                .cheatsheet_release
-                .load(std::sync::atomic::Ordering::Relaxed)
-                != st.release_seen
+        if ui.input(|i| i.viewport().close_requested()) || ui.input(|i| i.key_pressed(Key::Escape))
         {
             st.close = true;
         }
-        if ui.input(|i| i.viewport().close_requested()) {
+        let focused = ui.input(|i| i.viewport().focused);
+        if focused == Some(true) {
+            st.was_focused = true;
+        } else if focused == Some(false) && st.was_focused {
             st.close = true;
         }
 
@@ -234,7 +241,7 @@ impl CheatSheetView {
                         bottom: OVERLAY_PAD as i8,
                     })
                     .show(ui, |ui| {
-                        draw_columns(ui, &st, display, loading);
+                        draw_columns(ui, &mut st, display, loading);
                     });
             });
     }
@@ -244,16 +251,24 @@ impl CheatSheetView {
 
 /// 一个待排版的组：标题条 + 已换算的（键文本, 功能名）行。
 #[derive(Clone, Debug, PartialEq)]
+struct ShortcutRow {
+    display_key: String,
+    name: String,
+    key: ShortcutKey,
+    modifiers: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 enum Block {
     Group {
         title: String,
-        rows: Vec<(String, String)>,
+        rows: Vec<ShortcutRow>,
     },
 }
 
 // ---------------------------------------------------------------- 绘制
 
-fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loading: bool) {
+fn draw_columns(ui: &mut egui::Ui, st: &mut CheatState, display: DisplayRules, loading: bool) {
     let mut app_blocks = section_blocks(&st.data.app_groups, st.style, &display);
     let system_blocks = section_blocks(&st.data.system_groups, st.style, &display);
 
@@ -268,7 +283,12 @@ fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loadi
     } else if app_blocks.is_empty() {
         app_blocks.push(Block::Group {
             title: "读不到当前应用的菜单".to_string(),
-            rows: vec![("".to_string(), "该应用可能不暴露辅助功能树".to_string())],
+            rows: vec![ShortcutRow {
+                display_key: String::new(),
+                name: "该应用可能不暴露辅助功能树".into(),
+                key: ShortcutKey::Char(String::new()),
+                modifiers: 0,
+            }],
         });
     }
 
@@ -299,7 +319,7 @@ fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loadi
                         |ui| {
                             ui.set_width(app_w);
                             ui.set_height(col_h);
-                            header_bar(ui, &app_title, APP_TITLE_H, 13.5, app_w);
+                            header_bar(ui, &app_title, APP_TITLE_H, st.visual.title_size, app_w);
                             ui.add_space(GROUP_GAP);
                             egui::ScrollArea::vertical()
                                 .id_salt("cheatsheet-app-scroll")
@@ -307,7 +327,7 @@ fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loadi
                                 .show(ui, |ui| {
                                     ui.set_width(app_w);
                                     ui.spacing_mut().item_spacing.y = 0.0;
-                                    draw_block_list(ui, &app_blocks, app_w);
+                                    draw_block_list(ui, &app_blocks, app_w, st);
                                 });
                         },
                     );
@@ -318,7 +338,7 @@ fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loadi
                         |ui| {
                             ui.set_width(system_w);
                             ui.set_height(col_h);
-                            header_bar(ui, "系统", HEADER_H, 13.5, system_w);
+                            header_bar(ui, "系统", HEADER_H, st.visual.title_size, system_w);
                             ui.add_space(GROUP_GAP);
                             egui::ScrollArea::vertical()
                                 .id_salt("cheatsheet-system-scroll")
@@ -326,7 +346,13 @@ fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loadi
                                 .show(ui, |ui| {
                                     ui.set_width(system_w);
                                     ui.spacing_mut().item_spacing.y = 0.0;
-                                    draw_system_groups(ui, &system_blocks, system_w, system_col_w);
+                                    draw_system_groups(
+                                        ui,
+                                        &system_blocks,
+                                        system_w,
+                                        system_col_w,
+                                        st,
+                                    );
                                 });
                         },
                     );
@@ -335,23 +361,29 @@ fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loadi
         });
 }
 
-fn draw_block_list(ui: &mut egui::Ui, blocks: &[Block], col_w: f32) {
+fn draw_block_list(ui: &mut egui::Ui, blocks: &[Block], col_w: f32, st: &mut CheatState) {
     for (index, block) in blocks.iter().enumerate() {
         if index > 0 {
             ui.add_space(GROUP_GAP);
         }
-        draw_block(ui, block, col_w);
+        draw_block(ui, block, col_w, st);
     }
 }
 
 /// 系统区：标题条横跨两列，组内快捷键才分到左右两列，保持参考图的层级。
-fn draw_system_groups(ui: &mut egui::Ui, groups: &[Block], system_w: f32, col_w: f32) {
+fn draw_system_groups(
+    ui: &mut egui::Ui,
+    groups: &[Block],
+    system_w: f32,
+    col_w: f32,
+    st: &mut CheatState,
+) {
     for (index, block) in groups.iter().enumerate() {
         if index > 0 {
             ui.add_space(GROUP_GAP);
         }
         let Block::Group { title, rows } = block;
-        header_bar(ui, title, HEADER_H, 12.5, system_w);
+        header_bar(ui, title, HEADER_H, st.visual.group_size, system_w);
         let split = rows.len().div_ceil(2);
         let left = &rows[..split];
         let right = &rows[split..];
@@ -360,23 +392,23 @@ fn draw_system_groups(ui: &mut egui::Ui, groups: &[Block], system_w: f32, col_w:
             egui::vec2(system_w, row_count as f32 * ROW_H),
             egui::Layout::left_to_right(egui::Align::Min),
             |ui| {
-                draw_row_column(ui, left, col_w);
+                draw_row_column(ui, left, col_w, st);
                 ui.add_space(COL_GAP);
-                draw_row_column(ui, right, col_w);
+                draw_row_column(ui, right, col_w, st);
             },
         );
     }
 }
 
-fn draw_row_column(ui: &mut egui::Ui, rows: &[(String, String)], col_w: f32) {
+fn draw_row_column(ui: &mut egui::Ui, rows: &[ShortcutRow], col_w: f32, st: &mut CheatState) {
     ui.allocate_ui_with_layout(
         egui::vec2(col_w, rows.len() as f32 * ROW_H),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
             ui.set_width(col_w);
             ui.spacing_mut().item_spacing.y = 0.0;
-            for (key, name) in rows {
-                shortcut_row(ui, key, name);
+            for row in rows {
+                shortcut_row(ui, row, st);
             }
         },
     );
@@ -391,20 +423,26 @@ fn section_blocks(groups: &[ShortcutGroup], style: Style, display: &DisplayRules
                 .entries
                 .iter()
                 .filter_map(|entry| {
-                    laterkey_core::format_chord(entry.modifiers, &entry.key, style, display)
-                        .map(|key| (key, entry.title.clone()))
+                    laterkey_core::format_chord(entry.modifiers, &entry.key, style, display).map(
+                        |key| ShortcutRow {
+                            display_key: key,
+                            name: entry.title.clone(),
+                            key: entry.key.clone(),
+                            modifiers: entry.modifiers,
+                        },
+                    )
                 })
                 .collect(),
         })
         .collect()
 }
 
-fn draw_block(ui: &mut egui::Ui, block: &Block, col_w: f32) {
+fn draw_block(ui: &mut egui::Ui, block: &Block, col_w: f32, st: &mut CheatState) {
     match block {
         Block::Group { title, rows } => {
-            header_bar(ui, title, HEADER_H, 12.5, col_w);
-            for (key, name) in rows {
-                shortcut_row(ui, key, name);
+            header_bar(ui, title, HEADER_H, st.visual.group_size, col_w);
+            for row in rows {
+                shortcut_row(ui, row, st);
             }
         }
     }
@@ -429,7 +467,9 @@ fn header_bar(ui: &mut egui::Ui, title: &str, height: f32, font: f32, col_w: f32
 
 /// 一行快捷键：分配矩形是**整行宽**，键右对齐到键列，名称紧随其后——
 /// 名称也画在矩形内（超宽截断加 …），下一行才不会和它叠在一起。
-fn shortcut_row(ui: &mut egui::Ui, key: &str, name: &str) {
+fn shortcut_row(ui: &mut egui::Ui, row: &ShortcutRow, st: &mut CheatState) {
+    let key = &row.display_key;
+    let name = &row.name;
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_H),
         egui::Sense::hover(),
@@ -447,19 +487,32 @@ fn shortcut_row(ui: &mut egui::Ui, key: &str, name: &str) {
         egui::pos2(key_x, rect.center().y),
         Align2::RIGHT_CENTER,
         key,
+        st.visual.key_size,
     );
     let name_x = key_x + KEY_NAME_GAP;
     let max_w = (rect.right() - name_x).max(20.0);
-    let name = truncate_to_width(ui, name, FontId::proportional(12.0), max_w);
+    let name = truncate_to_width(ui, name, FontId::proportional(st.visual.name_size), max_w);
     ui.painter().text(
         egui::pos2(name_x, rect.center().y),
         Align2::LEFT_CENTER,
         name,
-        FontId::proportional(12.0),
+        FontId::proportional(st.visual.name_size),
         NAME_TEXT,
     );
+    if resp.clicked() {
+        let chord = laterkey_core::Chord {
+            keycode: match &row.key {
+                ShortcutKey::VirtualKey(code) => *code,
+                ShortcutKey::Char(ch) => laterkey_core::keys::named(ch).unwrap_or(-1),
+            },
+            flags: row.modifiers,
+        };
+        if chord.keycode >= 0 {
+            let _ = laterkey_platform_mac::trigger_chord(st.target_pid, chord);
+            st.close = true;
+        }
+    }
 }
-
 /// 一段连续同脚本的文本（CJK 或非 CJK）。
 fn is_cjk(c: char) -> bool {
     let cp = c as u32;
@@ -488,8 +541,7 @@ fn split_script_runs(text: &str) -> Vec<(bool, String)> {
 /// 定位（text_layout.rs:978-987），SF 与冬青黑的取整方向不同——直接一个
 /// 字符串排出来就高低不齐（2026-11-26 用户反馈「老毛病又犯了」）。
 /// 返回总宽（右对齐定位用）。
-fn draw_key_text(ui: &egui::Ui, anchor: egui::Pos2, align: Align2, text: &str) -> f32 {
-    let size = 12.0;
+fn draw_key_text(ui: &egui::Ui, anchor: egui::Pos2, align: Align2, text: &str, size: f32) -> f32 {
     let galley_for = |cjk: bool, s: String, color: Color32| {
         let font = if cjk {
             FontId::proportional(size)
@@ -694,8 +746,8 @@ mod headless_layout_tests {
         let (tx, _rx) = std::sync::mpsc::sync_channel(1);
         let shared = Arc::new(laterkey_platform_mac::Shared::new(tx, false));
         shared.set_cheatsheet(Arc::new(fake_sheet()));
-        let view = CheatSheetView::new(shared.clone());
-        view.prepare_open(false, 0);
+        let view = CheatSheetView::new(shared.clone(), CheatsheetConfig::default());
+        view.prepare_open(0, 0);
         let prims = tessellate(&view);
 
         // 面板底是半透明色，tessellate 后顶点色可能按预乘 alpha 落盘，两者都认

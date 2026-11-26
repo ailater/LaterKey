@@ -29,32 +29,37 @@ fn source() -> CGEventSourceRef {
     }) as CGEventSourceRef
 }
 
-/// 投递一组合成按键（按下 + 松开）。返回是否投递成功。
-/// 事件由 Cf（RAII）接管，任何提前返回都不会泄漏或双释放。
-pub fn chord(chord: Chord) -> bool {
+/// 从速览浮窗点击快捷键时执行一组合成按键：先激活开窗时记录的原应用。
+/// 与其他合成事件共用 HID source、OWN_TAG 和零 suppression interval。
+pub fn trigger_chord(target_pid: i32, chord: Chord) -> bool {
+    if target_pid > 0 {
+        super::focus::activate_pid(target_pid);
+    }
+    chord_impl(chord.keycode, chord.flags)
+}
+
+fn chord_impl(keycode: i64, flags: u64) -> bool {
     // SAFETY: 事件源进程存活期内有效；创建出的事件归 Cf 所有
     unsafe {
-        let down = Cf::owned(CGEventCreateKeyboardEvent(
-            source(),
-            chord.keycode as u16,
-            true,
-        ));
-        let up = Cf::owned(CGEventCreateKeyboardEvent(
-            source(),
-            chord.keycode as u16,
-            false,
-        ));
+        let down = Cf::owned(CGEventCreateKeyboardEvent(source(), keycode as u16, true));
+        let up = Cf::owned(CGEventCreateKeyboardEvent(source(), keycode as u16, false));
         if down.is_null() || up.is_null() {
             return false;
         }
         for ev in [&down, &up] {
-            CGEventSetFlags(ev.0, chord.flags);
+            CGEventSetFlags(ev.0, flags);
             CGEventSetIntegerValueField(ev.0, FIELD_USER_DATA, OWN_TAG);
         }
         CGEventPost(TAP_HID, down.0);
         CGEventPost(TAP_HID, up.0);
         true
     }
+}
+
+/// 投递一组合成按键（按下 + 松开）。返回是否投递成功。
+/// 事件由 Cf（RAII）接管，任何提前返回都不会泄漏或双释放。
+pub fn chord(chord: Chord) -> bool {
+    chord_impl(chord.keycode, chord.flags)
 }
 
 /// 投递一条修饰键 flagsChanged 事件：退出前复位系统修饰键状态用。

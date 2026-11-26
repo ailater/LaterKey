@@ -17,7 +17,7 @@ pub use clipboard::{
     png_dimensions, ClipboardEntry, History, ImageData, ImageFormat, MAX_ENTRIES, MAX_IMAGE_BYTES,
     MAX_IMAGE_TOTAL_BYTES, MAX_TEXT_BYTES,
 };
-pub use config::{compile, parse, parse_chord, Compiled, Config, GroupTable};
+pub use config::{compile, parse, parse_chord, CheatsheetConfig, Compiled, Config, GroupTable};
 pub use remap::{groups, Action, Chord, Decision, Env, Input, Kind, Remapper, Rules, Substitute};
 pub use shortcuts::{
     ax_modifiers_to_flags, format_chord, normalize_char, virtual_key_name, DisplayRules,

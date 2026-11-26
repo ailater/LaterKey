@@ -22,7 +22,14 @@ win_key_clipboard = true      # Win(⌘)+V 剪贴板历史面板：搜索历史�
 task_manager = true           # Ctrl+Alt+Del 或 Ctrl+Esc 呼出强制退出窗口
 settings_hotkey = true          # Ctrl+Alt+K 全局唤出设置面板
 shortcuts_peek = true         # 长按物理 Ctrl 2 秒呼出快捷键速览浮窗
+
 dock_click_minimize = true    # 再点一次前台应用的 Dock 图标 → 最小化
+
+[cheatsheet]
+title_size = 13.5            # 应用名与系统标题字号
+  group_size = 12.5            # 快捷键分组标题字号
+key_size = 12.0               # 快捷键字号
+name_size = 12.0              # 功能名称字号
 
 # [apps] 不写就用内置列表：常见终端、浏览器、访达，以及整体不改的远程桌面/虚拟机。
 # 要改就整段写出来（terminals / browsers / finder / passthrough，都是 bundle id 数组），
@@ -46,6 +53,8 @@ pub struct Config {
     pub remap: RemapConfig,
     #[serde(default)]
     pub apps: AppsConfig,
+    #[serde(default)]
+    pub cheatsheet: CheatsheetConfig,
     /// 不写就是默认的两条（F2 → 回车、F5 → ⌘R）；写 `substitute = []` 可全部关掉
     #[serde(default = "default_substitutes")]
     pub substitute: Vec<SubstituteConfig>,
@@ -72,6 +81,7 @@ impl Default for Config {
         Self {
             remap: RemapConfig::default(),
             apps: AppsConfig::default(),
+            cheatsheet: CheatsheetConfig::default(),
             substitute: default_substitutes(),
         }
     }
@@ -107,6 +117,31 @@ impl Default for RemapConfig {
             // 长按 Ctrl 速览默认开；CheatSheet 式手势，期间无其他按键才触发
             shortcuts_peek: true,
             dock_click_minimize: true,
+        }
+    }
+}
+
+/// 快捷键速览浮窗的视觉配置。字号单位为 egui points。
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct CheatsheetConfig {
+    /// 应用名与「系统」主标题字号。
+    pub title_size: f32,
+    /// 组标题字号。
+    pub group_size: f32,
+    /// 快捷键字号。
+    pub key_size: f32,
+    /// 功能名称字号。
+    pub name_size: f32,
+}
+
+impl Default for CheatsheetConfig {
+    fn default() -> Self {
+        Self {
+            title_size: 13.5,
+            group_size: 12.5,
+            key_size: 12.0,
+            name_size: 12.0,
         }
     }
 }
