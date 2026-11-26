@@ -122,6 +122,8 @@ pub struct Shared {
     pub cheatsheet_seq: AtomicU64,
     /// 触发过的长按「按住结束」次数（松开或作废），GUI 据此自动关掉手势开的浮窗
     pub cheatsheet_release: AtomicU64,
+    /// 速览触发瞬间的原应用 pid，GUI 激活浮窗后仍用它读取菜单/执行快捷键。
+    pub cheatsheet_target_pid: AtomicI32,
     /// 速览数据快照：读取线程写，GUI 读。version 变了才有新数据
     cheatsheet: RwLock<Arc<CheatSheet>>,
     pub cheatsheet_version: AtomicU64,
@@ -151,6 +153,7 @@ impl Shared {
             peek_since: AtomicU64::new(0),
             cheatsheet_seq: AtomicU64::new(0),
             cheatsheet_release: AtomicU64::new(0),
+            cheatsheet_target_pid: AtomicI32::new(0),
             cheatsheet: RwLock::new(Arc::new(CheatSheet::default())),
             cheatsheet_version: AtomicU64::new(0),
             jobs,

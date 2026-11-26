@@ -266,6 +266,9 @@ fn step_peek(shared: &Shared, triggered: &mut bool, enabled: bool, secure: bool,
     if since != 0 {
         if !*triggered && now_ms.saturating_sub(since) >= PEEK_HOLD_MS {
             *triggered = true;
+            shared
+                .cheatsheet_target_pid
+                .store(shared.front_pid.load(Ordering::Relaxed), Ordering::Relaxed);
             shared.cheatsheet_seq.fetch_add(1, Ordering::Relaxed);
             info("长按 Ctrl 2 秒，呼出快捷键速览");
         }

@@ -358,7 +358,7 @@ impl eframe::App for TrayApp {
                 .load(std::sync::atomic::Ordering::Relaxed);
             let pid = self
                 .shared
-                .front_pid
+                .cheatsheet_target_pid
                 .load(std::sync::atomic::Ordering::Relaxed);
             let visual = self.base_config.cheatsheet.clone();
             let view = self
