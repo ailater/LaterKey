@@ -460,11 +460,19 @@ impl TapCtx {
                         Ordering::Relaxed,
                     );
                 } else {
-                    // 松开、或按成了组合（⌃⇧ 等）：作废
+                    // Ctrl 松开：推进松开计数，浮窗据此关闭。松开计数只在
+                    // 这里推进——作废（敲键/点鼠标，见下与 on_mouse）不算
+                    // 松开：开窗后用户点浮窗里的按钮、敲键都不能关窗，只有
+                    // 真正松开 Ctrl 才关（2026-11-26 用户反馈：点「物理键」
+                    // 切换按钮浮窗就没了）。没开窗时的普通 Ctrl 松开也 +1，
+                    // 只是个没人对账的计数，无害。
                     self.shared.peek_since.store(0, Ordering::Relaxed);
+                    self.shared
+                        .cheatsheet_release
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
-            // 按住期间敲了任何键：作废
+            // 按住期间敲了任何键：作废（清起点，不动松开计数）
             EVENT_KEY_DOWN | EVENT_KEY_UP => {
                 self.shared.peek_since.store(0, Ordering::Relaxed);
             }

@@ -82,6 +82,12 @@ fn run_event_loop(
     let viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([680.0, 620.0])
         .with_title("LaterKey 设置")
+        // GL 上下文的透明度取自根视口这个开关（eframe glow_integration 取
+        // native_options.viewport.transparent）——不开它，速览浮窗的
+        // with_transparent 只是窗口属性，GL surface 没有 alpha 通道，
+        // 圆角外渲染成黑底（2026-11-26 用户反馈「圆角外面是黑的」）。
+        // 根窗口内容不透明，开着无副作用。
+        .with_transparent(true)
         .with_visible(false); // 默认不显示，点「设置…」才显示
 
     let options = eframe::NativeOptions {
@@ -144,6 +150,9 @@ struct TrayApp {
     synced: Option<Toggles>,
     /// 全局快捷键唤出设置的序号（worker 推，GUI 轮询）
     settings_seq_seen: u64,
+    /// 主窗口 NSWindow 已设回不透明（GL 透明度只能从根视口开，见
+    /// [`force_root_window_opaque`]；一次性）
+    root_opaque_done: bool,
 }
 
 impl TrayApp {
@@ -175,6 +184,7 @@ impl TrayApp {
             cheatsheet_release_at_open: 0,
             synced: None,
             settings_seq_seen: 0,
+            root_opaque_done: false,
         }
     }
 
@@ -204,7 +214,15 @@ impl eframe::App for TrayApp {
     // 菜单轮询、关闭拦截、退出命令全放 logic()：窗口被隐藏（macOS orderOut → Occluded）
     // 后 eframe glow 不再调用 ui()（run_ui 由 info.occluded 决定），但 logic() 无条件执行，
     // 托盘才能在窗口收起时继续响应、退出路径也保持可用。
-    fn logic(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
+        // 首帧把主窗口 NSWindow 设回不透明（一次性）
+        if !self.root_opaque_done {
+            self.root_opaque_done = true;
+            if let Some(win) = frame.winit_window() {
+                force_root_window_opaque(win);
+            }
+        }
+
         // 收菜单事件
         while let Ok(ev) = self.menu_rx.try_recv() {
             if let Some(action) = statusbar::translate(&ev, &self.toggles) {
@@ -329,8 +347,8 @@ impl eframe::App for TrayApp {
             panel.show(ctx, self.panel_open);
         }
 
-        // 快捷键速览：长按 Ctrl 手势 / 托盘菜单推进 seq；手势按住结束推进
-        // release（浮窗据此自动关）。视口同 panel 的保留策略：关闭只隐藏
+        // 快捷键速览：长按 Ctrl 手势 / 托盘菜单推进 seq；tap 在 Ctrl 抬起
+        // 时推进 release（浮窗据此自动关）。视口同 panel 的保留策略：关闭只隐藏
         let peek_seq = self
             .shared
             .cheatsheet_seq
@@ -363,8 +381,9 @@ impl eframe::App for TrayApp {
             ctx.request_repaint();
         }
         if let Some(view) = &self.cheatsheet {
-            // 手势开的窗：松开/作废那次按住就关。判定放这里（每帧必跑），
-            // 浮窗自己的 draw() 在无输入时不再重绘、检查不到松开
+            // 手势开的窗：Ctrl 松开就关（敲键/点鼠标是作废，不算松开，
+            // 浮窗保持）。判定放这里（每帧必跑）——浮窗自己的 draw() 在
+            // 无输入时不再重绘，检查不到松开
             if self.cheatsheet_open
                 && self.cheatsheet_gesture
                 && self
@@ -414,6 +433,50 @@ impl eframe::App for TrayApp {
         }
         if let Some(inner) = &mut self.inner {
             eframe::App::ui(inner, ui, frame);
+        }
+    }
+}
+
+/// 把主窗口的 NSWindow 设回不透明。
+///
+/// 背景矛盾：速览浮窗的圆角外要透出桌面，GL surface 必须带 alpha 通道；
+/// 而 eframe 的 GL 上下文透明度只认 `native_options.viewport.transparent`
+/// （glow_integration 直接读根视口这个字段）——开了它，主窗口的 NSWindow
+/// 也被建成非不透明，设置页标题栏跟着变透明（2026-11-26 用户反馈）。这里
+/// 在首帧用 ObjC 把主窗口 NSWindow 的 isOpaque 设回 YES。winit 0.30 不再
+/// 直接暴露 ns_window，走 raw-window-handle 拿 NSView 再向 AppKit 要 window。
+/// 速览浮窗是独立 NSWindow（自己的 with_transparent），不受影响。
+fn force_root_window_opaque(win: &winit::window::Window) {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyObject, Bool};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = win.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: ns_view 是 winit 创建的有效 NSView 指针；向它要 window 并
+    // 调 setOpaque:/setBackgroundColor: 是标准 AppKit 消息。两处都要还原：
+    // winit 的 transparent 属性除了 setOpaque(false) 还把背景色设成了
+    // clearColor——不还原背景色，标准标题栏仍画在透明底上
+    unsafe {
+        let ns_view = appkit.ns_view.as_ptr() as *mut AnyObject;
+        if ns_view.is_null() {
+            return;
+        }
+        let window: *mut AnyObject = msg_send![ns_view, window];
+        if window.is_null() {
+            return;
+        }
+        let _: () = msg_send![window, setOpaque: Bool::new(true)];
+        let Some(ns_color) = objc2::runtime::AnyClass::get(c"NSColor") else {
+            return;
+        };
+        let bg: *mut AnyObject = msg_send![ns_color, windowBackgroundColor];
+        if !bg.is_null() {
+            let _: () = msg_send![window, setBackgroundColor: bg];
         }
     }
 }

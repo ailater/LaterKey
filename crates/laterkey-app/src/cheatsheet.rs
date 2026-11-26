@@ -38,8 +38,10 @@ use laterkey_platform_mac::Shared;
 
 use crate::settings::MUTED;
 
-/// 视口尺寸：一整块致密浮层（对齐参考工具的占屏比例）。
-const SIZE: [f32; 2] = [1010.0, 830.0];
+/// 视口尺寸：一整块致密浮层（对齐参考工具的占屏比例）。加宽后三列各
+/// ~360px，应用菜单多的应用（浏览器/IDE 十来个菜单）也能排下；
+/// 还排不下走横向滚动兜底（见 draw_columns）。
+const SIZE: [f32; 2] = [1140.0, 880.0];
 /// 浮层圆角。
 const PANEL_RADIUS: u8 = 12;
 /// 标题条圆角。
@@ -362,32 +364,39 @@ fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loadi
 
     let inner_w = ui.available_width();
     let col_h = ui.available_height();
-    let col_w = ((inner_w - 2.0 * COL_GAP) / 3.0).min(340.0);
+    let col_w = ((inner_w - 2.0 * COL_GAP) / 3.0).min(362.0);
     let cols = pack_columns(&blocks, col_h);
     let cols_w = cols.len() as f32 * col_w + (cols.len().saturating_sub(1)) as f32 * COL_GAP;
 
     ui.spacing_mut().item_spacing.x = COL_GAP;
-    // **不能用 ui.horizontal()**：egui 0.35 里 horizontal 只分配 interact_size.y
-    // （18px）高——必须 allocate_ui_with_layout 显式给全高（无头测试锁定该回归）
-    ui.allocate_ui_with_layout(
-        egui::vec2(inner_w.max(cols_w), col_h),
-        egui::Layout::left_to_right(egui::Align::Min),
-        |ui| {
-            for col in &cols {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(col_w, col_h),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.set_width(col_w);
-                        ui.set_height(col_h);
-                        for block in col {
-                            draw_block(ui, block, col_w);
-                        }
-                    },
-                );
-            }
-        },
-    );
+    // 列数超出三列（巨型应用菜单 + 全部系统组）时横向滚动兜底，内容不裁切；
+    // 放得下时滚动条不出现。col_h 在进入 ScrollArea 前量好
+    egui::ScrollArea::horizontal()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            // **不能用 ui.horizontal()**：egui 0.35 里 horizontal 只分配
+            // interact_size.y（18px）高——必须 allocate_ui_with_layout 显式
+            // 给全高（无头测试锁定该回归）
+            ui.allocate_ui_with_layout(
+                egui::vec2(inner_w.max(cols_w), col_h),
+                egui::Layout::left_to_right(egui::Align::Min),
+                |ui| {
+                    for col in &cols {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(col_w, col_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_width(col_w);
+                                ui.set_height(col_h);
+                                for block in col {
+                                    draw_block(ui, block, col_w);
+                                }
+                            },
+                        );
+                    }
+                },
+            );
+        });
 }
 
 fn draw_block(ui: &mut egui::Ui, block: &Block, col_w: f32) {

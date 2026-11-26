@@ -253,12 +253,13 @@ fn capture_enabled(win_key_clipboard: bool, secure_input: bool) -> bool {
 /// 长按 Ctrl 速览手势的状态机（每轮推进一步）。
 ///
 /// `peek_since` 由 tap 线程维护（裸 Ctrl 按住的起点，松开/作废清 0）；这里
-/// 负责到点触发、以及触发过的按住结束时给 GUI 补一条结束信号。规则中途
-/// 关闭或进入安全输入时立即作废——暂停期间 tap 看不到事件流，状态不可信。
+/// 负责到点触发。规则中途关闭或进入安全输入时立即作废——暂停期间 tap 看到
+/// 不到事件流，状态不可信。松开计数不在 worker 推进：tap 在 Ctrl 抬起事件
+/// 里直接 +1（作废不算松开，见 tap.rs track_peek）。
 fn step_peek(shared: &Shared, triggered: &mut bool, enabled: bool, secure: bool, now_ms: u64) {
     let since = shared.peek_since.load(Ordering::Relaxed);
     if since != 0 && (!enabled || secure) {
-        // 作废：清掉起点，下一轮走「按住结束」分支补结束信号
+        // 作废：清掉起点，下一轮复位触发标记
         shared.peek_since.store(0, Ordering::Relaxed);
         return;
     }
@@ -271,8 +272,9 @@ fn step_peek(shared: &Shared, triggered: &mut bool, enabled: bool, secure: bool,
         return; // 还按着（无论触发与否），不结算
     }
     if *triggered {
+        // 按住结束（作废或松开）。松开计数由 tap 在 Ctrl 抬起事件里直接
+        // 推进——作废（开窗后敲键/点鼠标）不算松开，浮窗不关
         *triggered = false;
-        shared.cheatsheet_release.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -514,18 +516,19 @@ mod tests {
         );
         assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 1);
 
-        // 松开（tap 清零）：补结束信号
+        // 松开（tap 清零）：worker 只复位触发标记；松开计数由 tap 在
+        // Ctrl 抬起事件推进，不归 worker 管
         shared.peek_since.store(0, Ordering::Relaxed);
         step_peek(&shared, &mut triggered, true, false, base + 6000);
         assert!(!triggered);
-        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 0);
 
-        // 没触发过的短按结束：不补结束信号
+        // 没触发过的短按结束：无影响
         shared.peek_since.store(base + 10_000, Ordering::Relaxed);
         step_peek(&shared, &mut triggered, true, false, base + 11_000);
         shared.peek_since.store(0, Ordering::Relaxed);
         step_peek(&shared, &mut triggered, true, false, base + 12_000);
-        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -540,7 +543,7 @@ mod tests {
         assert_eq!(shared.peek_since.load(Ordering::Relaxed), 0);
         assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 0);
 
-        // 触发之后才进安全输入：作废并补结束信号，浮窗随之关闭
+        // 触发之后才进安全输入：作废（浮窗不关——关窗只看 Ctrl 真松开）
         let mut triggered = false;
         shared.peek_since.store(100, Ordering::Relaxed);
         step_peek(&shared, &mut triggered, true, false, 3100);
@@ -553,7 +556,7 @@ mod tests {
         );
         step_peek(&shared, &mut triggered, true, true, 3300);
         assert!(!triggered);
-        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.cheatsheet_release.load(Ordering::Relaxed), 0);
         assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 1);
     }
 }
