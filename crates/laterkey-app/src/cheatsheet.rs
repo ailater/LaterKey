@@ -69,7 +69,7 @@ const APP_TITLE_H: f32 = 26.0;
 /// 组与组之间的空隙。
 const GROUP_GAP: f32 = 9.0;
 /// 系统组内部两列之间的空隙。
-const COL_GAP: f32 = 28.0;
+const COL_GAP: f32 = 90.0;
 /// 应用区与系统总区之间的宽留白（参考图的主分区间隔）。
 const SECTION_GAP: f32 = 90.0;
 /// 浮层内边距。
@@ -304,7 +304,7 @@ fn draw_columns(ui: &mut egui::Ui, st: &mut CheatState, display: DisplayRules, l
     let app_w = (inner_w * 0.25).min(231.0);
     let system_w = inner_w - app_w - SECTION_GAP;
     // 参考图右侧不是等宽三栏：左系统列更宽，右侧只承载少量快捷键。
-    let system_col_w = (system_w * 0.66).min(430.0);
+    let system_col_w = (system_w - COL_GAP).min(330.0);
 
     // 参考图的骨架固定为「应用区 | 系统总区」。应用区内部允许纵向滚动，
     // 绝不因为菜单很多而把应用内容挤到系统区；系统组标题横跨右侧两列，
@@ -381,38 +381,53 @@ fn draw_system_groups(
     left_w: f32,
     st: &mut CheatState,
 ) {
-    let right_w = (system_w - left_w - COL_GAP).max(120.0);
-    for (index, block) in groups.iter().enumerate() {
-        if index > 0 {
-            ui.add_space(GROUP_GAP);
-        }
-        let Block::Group { title, rows } = block;
-        header_bar(ui, title, HEADER_H, st.visual.group_size, system_w);
-        let split = rows.len().div_ceil(2);
-        let left = &rows[..split];
-        let right = &rows[split..];
-        let row_count = left.len().max(right.len());
-        ui.allocate_ui_with_layout(
-            egui::vec2(system_w, row_count as f32 * ROW_H),
-            egui::Layout::left_to_right(egui::Align::Min),
-            |ui| {
-                draw_row_column(ui, left, left_w, st);
-                ui.add_space(COL_GAP);
-                draw_row_column(ui, right, right_w, st);
-            },
-        );
-    }
+    let right_w = (system_w - left_w - COL_GAP).max(180.0);
+    let (left, right) = split_system_groups(groups);
+    ui.allocate_ui_with_layout(
+        egui::vec2(system_w, ui.available_height()),
+        egui::Layout::left_to_right(egui::Align::Min),
+        |ui| {
+            draw_group_column(ui, &left, left_w, st);
+            ui.add_space(COL_GAP);
+            draw_group_column(ui, &right, right_w, st);
+        },
+    );
 }
 
-fn draw_row_column(ui: &mut egui::Ui, rows: &[ShortcutRow], col_w: f32, st: &mut CheatState) {
+/// 把系统组按参考图的两列流式排布：保持顺序，优先填充左列，
+/// 只在当前列放不下一个完整组时换到右列。标题只属于自己的列。
+fn split_system_groups(groups: &[Block]) -> (Vec<&Block>, Vec<&Block>) {
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    let mut left_h = 0.0;
+    let mut right_h = 0.0;
+    let limit = SIZE[1] - OVERLAY_PAD * 2.0 - HEADER_H - GROUP_GAP - 24.0;
+    for group in groups {
+        let Block::Group { rows, .. } = group;
+        let height = HEADER_H + rows.len() as f32 * ROW_H + GROUP_GAP;
+        if left_h <= right_h && left_h + height <= limit || right_h + height > limit {
+            left.push(group);
+            left_h += height;
+        } else {
+            right.push(group);
+            right_h += height;
+        }
+    }
+    (left, right)
+}
+
+fn draw_group_column(ui: &mut egui::Ui, groups: &[&Block], width: f32, st: &mut CheatState) {
     ui.allocate_ui_with_layout(
-        egui::vec2(col_w, rows.len() as f32 * ROW_H),
+        egui::vec2(width, ui.available_height()),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
-            ui.set_width(col_w);
+            ui.set_width(width);
             ui.spacing_mut().item_spacing.y = 0.0;
-            for row in rows {
-                shortcut_row(ui, row, st);
+            for (index, block) in groups.iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(GROUP_GAP);
+                }
+                draw_block(ui, block, width, st);
             }
         },
     );
@@ -485,7 +500,7 @@ fn shortcut_row(ui: &mut egui::Ui, row: &ShortcutRow, st: &mut CheatState) {
             Color32::from_rgba_unmultiplied_const(122, 162, 247, 14),
         );
     }
-    let key_col = KEY_COL.min((rect.width() * 0.52).max(72.0));
+    let key_col = KEY_COL.min((rect.width() * 0.32).max(72.0));
     let key_x = rect.left() + key_col;
     draw_key_text(
         ui,
