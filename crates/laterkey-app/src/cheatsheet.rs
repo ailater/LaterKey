@@ -556,7 +556,10 @@ fn draw_key_text(ui: &egui::Ui, anchor: egui::Pos2, align: Align2, text: &str, s
         ui.painter().layout_no_wrap(s, font, color)
     };
     let runs = split_script_runs(text);
-    let mut galleys: Vec<_> = runs
+    if runs.is_empty() {
+        return 0.0;
+    }
+    let galleys: Vec<_> = runs
         .iter()
         .map(|&(cjk, ref s)| galley_for(cjk, s.clone(), KEY_ACCENT))
         .collect();
@@ -572,8 +575,6 @@ fn draw_key_text(ui: &egui::Ui, anchor: egui::Pos2, align: Align2, text: &str, s
         ui.painter().galley(pos, g.clone(), KEY_TEXT);
         cursor_x += g.size().x;
     }
-    debug_assert!(!galleys.is_empty());
-    let _ = &mut galleys; // keep clippy quiet about unused mut in release
     total_w
 }
 
