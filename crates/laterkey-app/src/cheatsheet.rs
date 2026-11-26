@@ -10,8 +10,8 @@
 //!   `interact_size.y`（18px）高，内部 `available_height()` 恒为 18，面板底
 //!   与内容全被压扁（此前的 Frame+set_min_height 版本栽在同一根因）；改用
 //!   `allocate_ui_with_layout` 显式分配全高；
-//! - 分列先**纯计算**（`pack_columns`，只数行高）再画：立即模式没法边画边
-//!   换列；组放不下时拆到下一列，下一列重复组标题（参考工具同款行为）；
+//! - 应用区和系统区分别管理滚动与分栏：应用菜单不会挤进系统区；系统组
+//!   标题横跨右侧两列，组内条目再左右分配；
 //! - 每行的分配矩形必须是整行宽，键与名称都画在矩形内，否则换行错位。
 //!
 //! 其它要点：
@@ -242,181 +242,165 @@ impl CheatSheetView {
 
 // ---------------------------------------------------------------- 排版模型
 
-/// 一个待排版的块。AppTitle 是第一列顶部的应用名大标题条；
-/// Group 是普通组（标题条 + 行）。行是换算好的（键文本, 功能名）。
+/// 一个待排版的组：标题条 + 已换算的（键文本, 功能名）行。
 #[derive(Clone, Debug, PartialEq)]
 enum Block {
-    AppTitle(String),
     Group {
         title: String,
         rows: Vec<(String, String)>,
     },
 }
 
-impl Block {
-    fn header_height(&self) -> f32 {
-        match self {
-            Block::AppTitle(_) => APP_TITLE_H,
-            Block::Group { .. } => HEADER_H,
-        }
-    }
-
-    fn rows(&self) -> &[(String, String)] {
-        match self {
-            Block::AppTitle(_) => &[],
-            Block::Group { rows, .. } => rows,
-        }
-    }
-
-    fn with_rows(&self, rows: Vec<(String, String)>) -> Self {
-        match self {
-            Block::AppTitle(t) => Block::AppTitle(t.clone()),
-            Block::Group { title, .. } => Block::Group {
-                title: title.clone(),
-                rows,
-            },
-        }
-    }
-}
-
-/// 把数据源整理成待排版块：应用名大标题 + 应用菜单组 + 系统快捷键组。
-/// 读不出键位的条目（format_chord 返回 None）在这里被过滤掉。
-fn build_blocks(
-    sheet: &laterkey_platform_mac::CheatSheet,
-    style: Style,
-    display: &DisplayRules,
-) -> Vec<Block> {
-    let app_name = if sheet.app_name.is_empty() {
-        "当前应用".to_string()
-    } else {
-        sheet.app_name.clone()
-    };
-    let group_block = |g: &ShortcutGroup| Block::Group {
-        title: g.title.clone(),
-        rows: g
-            .entries
-            .iter()
-            .filter_map(|e| {
-                laterkey_core::format_chord(e.modifiers, &e.key, style, display)
-                    .map(|k| (k, e.title.clone()))
-            })
-            .collect(),
-    };
-    let mut blocks = vec![Block::AppTitle(app_name)];
-    blocks.extend(sheet.app_groups.iter().map(&group_block));
-    blocks.extend(sheet.system_groups.iter().map(&group_block));
-    blocks
-}
-
-/// 按列高把块切成若干列（纯计算，只数行高——立即模式没法边画边换列）。
-/// 单组行数放不下时拆到下一列，下一列重复组标题（参考工具同款行为）；
-/// 一行都放不下时换列，直到排完。
-fn pack_columns(blocks: &[Block], col_h: f32) -> Vec<Vec<Block>> {
-    let mut cols: Vec<Vec<Block>> = vec![Vec::new()];
-    let mut cur_h = 0.0f32;
-    for block in blocks {
-        let mut remaining = block.rows();
-        loop {
-            let gap = if cur_h > 0.0 { GROUP_GAP } else { 0.0 };
-            let avail_rows = ((col_h - cur_h - gap - block.header_height()) / ROW_H).floor();
-            if avail_rows < 1.0 && !cols.last().is_some_and(|c| c.is_empty()) {
-                cols.push(Vec::new());
-                cur_h = 0.0;
-                continue;
-            }
-            if avail_rows < 1.0 {
-                // 空列都放不下一个标题条：放弃这条（避免死循环）
-                break;
-            }
-            let take = (avail_rows as usize).min(remaining.len());
-            cols.last_mut()
-                .unwrap()
-                .push(block.with_rows(remaining[..take].to_vec()));
-            cur_h += gap + block.header_height() + take as f32 * ROW_H;
-            remaining = &remaining[take..];
-            if remaining.is_empty() {
-                break;
-            }
-            cols.push(Vec::new());
-            cur_h = 0.0;
-        }
-    }
-    cols
-}
-
 // ---------------------------------------------------------------- 绘制
 
 fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loading: bool) {
-    let mut blocks = build_blocks(&st.data, st.style, &display);
+    let mut app_blocks = section_blocks(&st.data.app_groups, st.style, &display);
+    let system_blocks = section_blocks(&st.data.system_groups, st.style, &display);
+
     if loading {
-        // 开窗后还没读到新数据：标题条提示，不空等（数据到了 version 变了自会刷新）
-        blocks.insert(
-            1,
+        app_blocks.insert(
+            0,
             Block::Group {
                 title: "正在读取当前应用的菜单…".to_string(),
                 rows: Vec::new(),
             },
         );
-    } else if st.data.app_groups.is_empty() {
-        // 读不到菜单的应用（不暴露辅助功能树）：给一句说明而不是空列
-        blocks.insert(
-            1,
-            Block::Group {
-                title: "读不到当前应用的菜单".to_string(),
-                rows: vec![("".to_string(), "该应用可能不暴露辅助功能树".to_string())],
-            },
-        );
+    } else if app_blocks.is_empty() {
+        app_blocks.push(Block::Group {
+            title: "读不到当前应用的菜单".to_string(),
+            rows: vec![("".to_string(), "该应用可能不暴露辅助功能树".to_string())],
+        });
     }
 
+    let app_title = if st.data.app_name.is_empty() {
+        "当前应用".to_string()
+    } else {
+        st.data.app_name.clone()
+    };
     let inner_w = ui.available_width();
     let col_h = ui.available_height();
-    let col_w = ((inner_w - 2.0 * COL_GAP) / 3.0).min(362.0);
-    let cols = pack_columns(&blocks, col_h);
-    let cols_w = cols.len() as f32 * col_w + (cols.len().saturating_sub(1)) as f32 * COL_GAP;
+    let app_w = ((inner_w - COL_GAP) * 0.31).min(340.0);
+    let system_w = inner_w - app_w - COL_GAP;
+    let system_col_w = ((system_w - COL_GAP) / 2.0).min(362.0);
 
-    ui.spacing_mut().item_spacing.x = COL_GAP;
-    // 列数超出三列（巨型应用菜单 + 全部系统组）时横向滚动兜底，内容不裁切；
-    // 放得下时滚动条不出现。col_h 在进入 ScrollArea 前量好
+    // 参考图的骨架固定为「应用区 | 系统总区」。应用区内部允许纵向滚动，
+    // 绝不因为菜单很多而把应用内容挤到系统区；系统组标题横跨右侧两列，
+    // 每组的条目再在组内两列流式排列。
     egui::ScrollArea::horizontal()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // **不能用 ui.horizontal()**：egui 0.35 里 horizontal 只分配
-            // interact_size.y（18px）高——必须 allocate_ui_with_layout 显式
-            // 给全高（无头测试锁定该回归）
             ui.allocate_ui_with_layout(
-                egui::vec2(inner_w.max(cols_w), col_h),
+                egui::vec2(inner_w, col_h),
                 egui::Layout::left_to_right(egui::Align::Min),
                 |ui| {
-                    for col in &cols {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(col_w, col_h),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                ui.set_width(col_w);
-                                ui.set_height(col_h);
-                                // 垂直节奏必须与 pack_columns 的公式严格一致：
-                                // 行高 ROW_H、标题条高 HEADER_H/APP_TITLE_H、
-                                // 组间 GROUP_GAP。egui 默认 item_spacing.y 会在
-                                // 每个控件后面再垫一截，画出来的列比打包假设的
-                                // 高，底部整段被窗口裁掉（「显示不全」的真根因）
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                for (i, block) in col.iter().enumerate() {
-                                    if i > 0 {
-                                        ui.add_space(GROUP_GAP);
-                                    }
-                                    draw_block(ui, block, col_w);
-                                }
-                            },
-                        );
-                    }
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(app_w, col_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(app_w);
+                            ui.set_height(col_h);
+                            header_bar(ui, &app_title, APP_TITLE_H, 13.5, app_w);
+                            ui.add_space(GROUP_GAP);
+                            egui::ScrollArea::vertical()
+                                .id_salt("cheatsheet-app-scroll")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.set_width(app_w);
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    draw_block_list(ui, &app_blocks, app_w);
+                                });
+                        },
+                    );
+                    ui.add_space(COL_GAP);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(system_w, col_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(system_w);
+                            ui.set_height(col_h);
+                            header_bar(ui, "系统", HEADER_H, 13.5, system_w);
+                            ui.add_space(GROUP_GAP);
+                            egui::ScrollArea::vertical()
+                                .id_salt("cheatsheet-system-scroll")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.set_width(system_w);
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    draw_system_groups(ui, &system_blocks, system_w, system_col_w);
+                                });
+                        },
+                    );
                 },
             );
         });
 }
 
+fn draw_block_list(ui: &mut egui::Ui, blocks: &[Block], col_w: f32) {
+    for (index, block) in blocks.iter().enumerate() {
+        if index > 0 {
+            ui.add_space(GROUP_GAP);
+        }
+        draw_block(ui, block, col_w);
+    }
+}
+
+/// 系统区：标题条横跨两列，组内快捷键才分到左右两列，保持参考图的层级。
+fn draw_system_groups(ui: &mut egui::Ui, groups: &[Block], system_w: f32, col_w: f32) {
+    for (index, block) in groups.iter().enumerate() {
+        if index > 0 {
+            ui.add_space(GROUP_GAP);
+        }
+        let Block::Group { title, rows } = block;
+        header_bar(ui, title, HEADER_H, 12.5, system_w);
+        let split = rows.len().div_ceil(2);
+        let left = &rows[..split];
+        let right = &rows[split..];
+        let row_count = left.len().max(right.len());
+        ui.allocate_ui_with_layout(
+            egui::vec2(system_w, row_count as f32 * ROW_H),
+            egui::Layout::left_to_right(egui::Align::Min),
+            |ui| {
+                draw_row_column(ui, left, col_w);
+                ui.add_space(COL_GAP);
+                draw_row_column(ui, right, col_w);
+            },
+        );
+    }
+}
+
+fn draw_row_column(ui: &mut egui::Ui, rows: &[(String, String)], col_w: f32) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(col_w, rows.len() as f32 * ROW_H),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_width(col_w);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (key, name) in rows {
+                shortcut_row(ui, key, name);
+            }
+        },
+    );
+}
+
+fn section_blocks(groups: &[ShortcutGroup], style: Style, display: &DisplayRules) -> Vec<Block> {
+    groups
+        .iter()
+        .map(|group| Block::Group {
+            title: group.title.clone(),
+            rows: group
+                .entries
+                .iter()
+                .filter_map(|entry| {
+                    laterkey_core::format_chord(entry.modifiers, &entry.key, style, display)
+                        .map(|key| (key, entry.title.clone()))
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 fn draw_block(ui: &mut egui::Ui, block: &Block, col_w: f32) {
     match block {
-        Block::AppTitle(title) => header_bar(ui, title, APP_TITLE_H, 13.5, col_w),
         Block::Group { title, rows } => {
             header_bar(ui, title, HEADER_H, 12.5, col_w);
             for (key, name) in rows {
@@ -432,26 +416,10 @@ fn header_bar(ui: &mut egui::Ui, title: &str, height: f32, font: f32, col_w: f32
         egui::vec2(ui.available_width(), height),
         egui::Sense::hover(),
     );
-    // 两层底色制造轻微的顶部高光，比单一灰条更有层次但不增加视觉噪声。
     ui.painter().rect_filled(rect, HEADER_RADIUS, HEADER_BG);
-    let highlight = egui::Rect::from_min_size(
-        rect.min + egui::vec2(1.0, 1.0),
-        egui::vec2((rect.width() - 2.0).max(0.0), 1.0),
-    );
-    ui.painter().rect_filled(
-        highlight,
-        1.0,
-        Color32::from_rgba_unmultiplied_const(255, 255, 255, 18),
-    );
-    // 左侧小色标统一提示「这里是一个快捷键组」，应用标题也共享同一语言。
-    let marker = egui::Rect::from_min_size(
-        rect.left_top() + egui::vec2(7.0, 6.0),
-        egui::vec2(3.0, (height - 12.0).max(3.0)),
-    );
-    ui.painter().rect_filled(marker, 1.5, KEY_ACCENT);
-    let text = truncate_to_width(ui, title, FontId::proportional(font), col_w - 28.0);
+    let text = truncate_to_width(ui, title, FontId::proportional(font), col_w - 20.0);
     ui.painter().text(
-        rect.center() + egui::vec2(4.0, 0.0),
+        rect.center(),
         Align2::CENTER_CENTER,
         text,
         FontId::proportional(font),
@@ -763,100 +731,5 @@ mod headless_layout_tests {
             "浮层底竖向只覆盖 {height:.0}px（期望 ≈{}）",
             SIZE[1]
         );
-    }
-
-    /// 行多的组要拆列续排（下一列重复标题），而不是溢出/截断消失。
-    #[test]
-    fn long_groups_flow_into_next_column() {
-        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-        let shared = Arc::new(laterkey_platform_mac::Shared::new(tx, false));
-        shared.set_cheatsheet(Arc::new(fake_sheet()));
-        let view = CheatSheetView::new(shared.clone());
-        view.prepare_open(false, 0);
-
-        let blocks = build_blocks(
-            &shared.cheatsheet(),
-            Style::Mac,
-            &laterkey_core::DisplayRules::default(),
-        );
-        let col_h = SIZE[1] - OVERLAY_PAD * 2.0 - 26.0;
-        let cols = pack_columns(&blocks, col_h);
-        assert!(cols.len() >= 2, "40+ 行内容应拆成多列，实际 {cols:?} 列");
-        // 同一组标题出现两次 = 跨列续排
-        let titles: Vec<String> = cols
-            .iter()
-            .flatten()
-            .filter_map(|b| match b {
-                Block::Group { title, rows } if !rows.is_empty() => Some(title.clone()),
-                _ => None,
-            })
-            .collect();
-        let mut sorted = titles.clone();
-        sorted.sort();
-        sorted.dedup();
-        assert!(
-            sorted.len() < titles.len(),
-            "应有组标题跨列重复（拆列续排），实际 {titles:?}"
-        );
-    }
-}
-
-#[cfg(test)]
-mod pack_tests {
-    use super::*;
-    use laterkey_core::{ShortcutEntry, ShortcutGroup, ShortcutKey};
-
-    fn group(title: &str, n: usize) -> ShortcutGroup {
-        ShortcutGroup {
-            title: title.into(),
-            entries: (0..n)
-                .map(|i| ShortcutEntry {
-                    title: format!("{title}条目{i}"),
-                    key: ShortcutKey::Char("C".into()),
-                    modifiers: laterkey_core::flags::COMMAND,
-                })
-                .collect(),
-        }
-    }
-
-    /// 分列不得丢行：所有列的行数之和必须等于输入行数之和。
-    /// （2026-11-26 真机截图发现输入法组/跨列续排的行整段消失。）
-    #[test]
-    fn packing_conserves_rows() {
-        let sheet = laterkey_platform_mac::CheatSheet {
-            app_name: "微信".into(),
-            app_groups: vec![
-                group("Apple", 6),
-                group("微信", 9),
-                group("文件", 7),
-                group("编辑", 8),
-            ],
-            system_groups: vec![
-                group("启动台和程序坞", 1),
-                group("调度中心", 9),
-                group("输入法", 2),
-                group("屏幕快照", 5),
-                group("聚焦", 2),
-            ],
-        };
-        let blocks = build_blocks(&sheet, Style::Mac, &DisplayRules::default());
-        let total: usize = blocks.iter().map(|b| b.rows().len()).sum();
-        let col_h = SIZE[1] - OVERLAY_PAD * 2.0 - 26.0;
-        let cols = pack_columns(&blocks, col_h);
-        let packed: usize = cols.iter().flatten().map(|b| b.rows().len()).sum();
-        assert_eq!(packed, total, "分列丢了行：输入 {total}，输出 {packed}");
-        // 组标题也不得丢（AppTitle + 每组至少出现一次，跨列重复不算丢）
-        let mut titles: Vec<String> = cols
-            .iter()
-            .flatten()
-            .map(|b| match b {
-                Block::AppTitle(t) => t.clone(),
-                Block::Group { title, .. } => title.clone(),
-            })
-            .collect();
-        let first_positions: Vec<&String> = titles.iter().collect();
-        let _ = first_positions;
-        titles.dedup_by(|a, b| a == b);
-        let _ = titles;
     }
 }
