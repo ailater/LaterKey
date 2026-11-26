@@ -133,6 +133,11 @@ struct TrayApp {
     cheatsheet: Option<CheatSheetView>,
     cheatsheet_open: bool,
     cheatsheet_seq_seen: u64,
+    /// 本次开窗是否手势触发（松开 Ctrl 自动关）+ 开窗时刻的松开计数。
+    /// 松开判定放根窗口 logic() 每帧轮询：浮窗 with_active(false) 加载完
+    /// 后收不到输入不再重绘，draw() 里的检查永远没机会跑（真机实测踩过）。
+    cheatsheet_gesture: bool,
+    cheatsheet_release_at_open: u64,
     /// 已同步到托盘菜单勾选的开关状态：面板/菜单/热加载任何路径改了
     /// toggles，轮询发现不一致就刷新菜单勾选（设置面板改开关不经过
     /// TrayApp::apply，只靠菜单路径同步会漏）。
@@ -166,6 +171,8 @@ impl TrayApp {
             cheatsheet: None,
             cheatsheet_open: false,
             cheatsheet_seq_seen: 0,
+            cheatsheet_gesture: false,
+            cheatsheet_release_at_open: 0,
             synced: None,
             settings_seq_seen: 0,
         }
@@ -348,12 +355,26 @@ impl eframe::App for TrayApp {
                 .cheatsheet
                 .get_or_insert_with(|| CheatSheetView::new(self.shared.clone()));
             view.prepare_open(gesture, release);
+            self.cheatsheet_gesture = gesture;
+            self.cheatsheet_release_at_open = release;
             self.cheatsheet_open = true;
             // AX 读菜单可能上百毫秒：后台线程读，浮窗先显示旧数据/读取中
             crate::cheatsheet::fetch_in_background(self.shared.clone(), pid);
             ctx.request_repaint();
         }
         if let Some(view) = &self.cheatsheet {
+            // 手势开的窗：松开/作废那次按住就关。判定放这里（每帧必跑），
+            // 浮窗自己的 draw() 在无输入时不再重绘、检查不到松开
+            if self.cheatsheet_open
+                && self.cheatsheet_gesture
+                && self
+                    .shared
+                    .cheatsheet_release
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    != self.cheatsheet_release_at_open
+            {
+                self.cheatsheet_open = false;
+            }
             if self.cheatsheet_open && view.close_requested() {
                 self.cheatsheet_open = false;
             }

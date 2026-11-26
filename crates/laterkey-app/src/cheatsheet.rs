@@ -1,16 +1,18 @@
 //! 快捷键速览浮窗：第二视口（deferred），长按 Ctrl 3 秒或托盘「快捷键速览」呼出。
 //!
-//! 视觉对齐 macOS 原生快捷键速览（键指如飞式）：**三栏浮动面板**——左栏当前
-//! 应用（大标题 = 应用名），右两栏系统快捷键；每组一条居中标题条，下挂
-//! 「组合键 + 功能名」行，键列右对齐、名称列整齐。整窗透明，面板各自半透明
-//! 圆角悬浮在桌面/原应用上。
+//! 视觉对齐 macOS 快捷键速览工具（键指如飞/CheatSheet 式）：**一整块致密
+//! 的深色浮层**——应用名大标题 + 应用菜单组占第一列，系统快捷键组依次流式
+//! 排满后续列；每组一条居中圆角标题条，下挂「键帽符号 + 功能名」行（键右
+//! 对齐、名称超宽截断加 …），行距紧凑。整窗透明，浮层底半透明圆角。
 //!
-//! 布局实现注意：三栏**不能用 `ui.horizontal()`**——egui 0.35 里 horizontal
-//! 只分配 `interact_size.y`（18px）高，内部 `available_height()` 恒为 18，
-//! 面板底与滚动区都会被压扁（此前的 Frame+set_min_height 版本也是栽在同一
-//! 根因上）；改用 `allocate_ui_with_layout` 显式分配全高，再 `ui.scope`
-//! 固定宽高后自绘面板底。每行快捷键的分配矩形必须是整行宽，键与名称都画
-//! 在矩形内，否则换行错位。
+//! 布局实现注意：
+//! - 横向多列**不能用 `ui.horizontal()`**——egui 0.35 里 horizontal 只分配
+//!   `interact_size.y`（18px）高，内部 `available_height()` 恒为 18，面板底
+//!   与内容全被压扁（此前的 Frame+set_min_height 版本栽在同一根因）；改用
+//!   `allocate_ui_with_layout` 显式分配全高；
+//! - 分列先**纯计算**（`pack_columns`，只数行高）再画：立即模式没法边画边
+//!   换列；组放不下时拆到下一列，下一列重复组标题（参考工具同款行为）；
+//! - 每行的分配矩形必须是整行宽，键与名称都画在矩形内，否则换行错位。
 //!
 //! 其它要点：
 //! - 无边框窗口在 macOS 成不了 key window——对剪贴板面板是缺陷，对速览正好：
@@ -18,8 +20,9 @@
 //! - 透明窗口必须配 `with_has_shadow(false)`（egui 官方注释：避免鬼影），且
 //!   `TrayApp::clear_color` 返回全透明——eframe 每帧用它清屏，不清透明的话
 //!   圆角外是一块不透明底；
-//! - 键名用文字（Ctrl+C）而不是 ⌘⌃ 符号：面板字体栈里键帽符号缺字形/形态
-//!   与中文混排不齐（font.rs 定案），口径切换仍可看 Mac 原生命名；
+//! - 键名 Mac 口径用键帽符号（⌘⌃⇧⌥）：SFNS.ttf 实测有全部字形，font.rs 的
+//!   system-cjk → system-symbols 兜底链负责渲染；物理键口径用 Ctrl/Win/Alt
+//!   文字（见 core `format_chord`）；
 //! - **关闭只隐藏不销毁视口**：反复销毁会让 glutin CGL 持有失效 view 而 panic
 //!   （v0.1.5 修过的 Win+V 连按崩溃），首开后一直保留，重开时重置状态。
 //!
@@ -29,19 +32,19 @@
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use egui::{Align2, Color32, RichText, ViewportBuilder, ViewportId};
+use egui::{Align2, Color32, FontId, ViewportBuilder, ViewportId};
 use laterkey_core::{DisplayRules, ShortcutGroup, Style};
 use laterkey_platform_mac::Shared;
 
 use crate::settings::MUTED;
 
-/// 视口尺寸：三栏面板（应用 + 系统两栏）。
-const SIZE: [f32; 2] = [1020.0, 660.0];
-/// 面板圆角。
+/// 视口尺寸：一整块致密浮层（对齐参考工具的占屏比例）。
+const SIZE: [f32; 2] = [1010.0, 830.0];
+/// 浮层圆角。
 const PANEL_RADIUS: u8 = 12;
 /// 标题条圆角。
-const HEADER_RADIUS: u8 = 7;
-/// 面板底：半透明黑（~88%），保证可读性又看得到底下在动。
+const HEADER_RADIUS: u8 = 6;
+/// 浮层底：半透明黑（~88%），保证可读性又看得到底下在动。
 const PANEL_BG: Color32 = Color32::from_rgba_unmultiplied_const(0x1a, 0x1b, 0x21, 224);
 /// 组标题条底：白的高光叠层。
 const HEADER_BG: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 30);
@@ -50,11 +53,19 @@ const KEY_TEXT: Color32 = Color32::from_rgba_unmultiplied_const(0xe8, 0xea, 0xf5
 /// 功能名文字（略暗一档）。
 const NAME_TEXT: Color32 = Color32::from_rgba_unmultiplied_const(0xc9, 0xcd, 0xe0, 255);
 /// 键列宽：键右对齐到此列，名称列起点整齐。
-const KEY_COL: f32 = 158.0;
-/// 行高。
-const ROW_H: f32 = 21.0;
-/// 面板内边距。
-const PANEL_PAD: f32 = 10.0;
+const KEY_COL: f32 = 128.0;
+/// 行高（紧凑，对齐参考工具的密度）。
+const ROW_H: f32 = 19.0;
+/// 组标题条高。
+const HEADER_H: f32 = 22.0;
+/// 应用名大标题条高。
+const APP_TITLE_H: f32 = 26.0;
+/// 组与组之间的空隙。
+const GROUP_GAP: f32 = 9.0;
+/// 列与列之间的空隙。
+const COL_GAP: f32 = 12.0;
+/// 浮层内边距。
+const OVERLAY_PAD: f32 = 14.0;
 /// 数据还没到时按这个节奏轮询 Shared 快照。
 const FETCH_POLL: f32 = 0.1;
 
@@ -108,8 +119,9 @@ impl CheatSheetView {
         }
     }
 
-    /// 每次打开都是新会话：口径回物理键、清除关闭标记；`gesture` 标记本次
-    /// 是长按手势开的（松开自动关），托盘菜单开的不随 Ctrl 松开关窗。
+    /// 每次打开都是新会话：口径回 Mac 原生（键帽符号，对齐参考工具）、清除
+    /// 关闭标记；`gesture` 标记本次是长按手势开的（松开自动关），托盘菜单开
+    /// 的不随 Ctrl 松开关窗。
     pub fn prepare_open(&self, gesture: bool, release_now: u64) {
         let mut st = self.lock();
         let version = self
@@ -117,7 +129,7 @@ impl CheatSheetView {
             .shared
             .cheatsheet_version
             .load(std::sync::atomic::Ordering::Relaxed);
-        st.style = Style::Physical;
+        st.style = Style::Mac;
         st.close = false;
         st.auto_close = gesture;
         st.release_seen = release_now;
@@ -190,192 +202,226 @@ impl CheatSheetView {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
             .show(ui, |ui| {
-                // 右上角迷你控件（口径切换 + ×），悬浮在面板上方
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    close_button(ui, &mut st);
-                    ui.add_space(6.0);
-                    style_switch(ui, &mut st);
-                });
-                ui.add_space(4.0);
+                // 浮层底先画（铺满整窗），内容全部叠在其上
+                let outer = ui.available_rect_before_wrap();
+                ui.painter().rect_filled(outer, PANEL_RADIUS, PANEL_BG);
 
-                let app_groups = st.data.app_groups.clone();
-                let system_groups = st.data.system_groups.clone();
-                let (sys_a, sys_b) = split_groups(&system_groups);
-
-                // 三栏浮动面板：应用 | 系统前半 | 系统后半。
-                // **不能用 ui.horizontal()**：egui 0.35 里 horizontal 只分配
-                // interact_size.y（18px）高，内部 available_height 恒为 18，
-                // 面板底和滚动区都会被压扁（无头测试锁过这个回归）；
-                // 用 allocate_ui_with_layout 显式分配全高。
-                ui.spacing_mut().item_spacing.x = 12.0;
-                let col_w = (ui.available_width() - 24.0) / 3.0;
-                let col_h = ui.available_height();
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), col_h),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        if app_groups.is_empty() {
-                            placeholder_panel(
-                                ui,
-                                col_w,
-                                col_h,
-                                if loading {
-                                    "正在读取当前应用的菜单…"
-                                } else {
-                                    "读不到当前应用的菜单\n（该应用可能不暴露辅助功能树）"
-                                },
-                                loading,
-                            );
-                        } else {
-                            let app_name = if st.data.app_name.is_empty() {
-                                "当前应用".to_string()
-                            } else {
-                                st.data.app_name.clone()
-                            };
-                            group_panel(
-                                ui,
-                                col_w,
-                                col_h,
-                                "app",
-                                &app_name,
-                                &app_groups,
-                                st.style,
-                                &display,
-                                true,
-                            );
-                        }
-                        group_panel(
-                            ui, col_w, col_h, "sys-a", "系统", &sys_a, st.style, &display, true,
-                        );
-                        // 第二个系统面板不重复大标题（对齐截图右栏的排版）
-                        group_panel(
-                            ui, col_w, col_h, "sys-b", "", &sys_b, st.style, &display, false,
-                        );
-                    },
+                // 右上角迷你控件（口径切换 + ×），悬浮在浮层右上角
+                let mut controls = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(outer)
+                        .layout(egui::Layout::right_to_left(egui::Align::Min)),
                 );
+                controls.add_space(OVERLAY_PAD);
+                close_button(&mut controls, &mut st);
+                controls.add_space(6.0);
+                style_switch(&mut controls, &mut st);
+
+                // 内容区：浮层内边距 + 顶部给控件让位
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: OVERLAY_PAD as i8,
+                        right: OVERLAY_PAD as i8,
+                        top: (OVERLAY_PAD as i8) + 26,
+                        bottom: OVERLAY_PAD as i8,
+                    })
+                    .show(ui, |ui| {
+                        draw_columns(ui, &st, display, loading);
+                    });
             });
     }
 }
 
-// ---------------------------------------------------------------- 面板
+// ---------------------------------------------------------------- 排版模型
 
-/// 把系统分组按条目数对半切开，两栏高度大致均衡；至少保证前半非空。
-fn split_groups(groups: &[ShortcutGroup]) -> (Vec<ShortcutGroup>, Vec<ShortcutGroup>) {
-    let total: usize = groups.iter().map(|g| g.entries.len()).sum();
-    let half = total.div_ceil(2);
-    let mut acc = 0usize;
-    let mut first = Vec::new();
-    let mut second = Vec::new();
-    for group in groups {
-        if acc < half || first.is_empty() {
-            acc += group.entries.len();
-            first.push(group.clone());
-        } else {
-            second.push(group.clone());
+/// 一个待排版的块。AppTitle 是第一列顶部的应用名大标题条；
+/// Group 是普通组（标题条 + 行）。行是换算好的（键文本, 功能名）。
+#[derive(Clone, Debug, PartialEq)]
+enum Block {
+    AppTitle(String),
+    Group {
+        title: String,
+        rows: Vec<(String, String)>,
+    },
+}
+
+impl Block {
+    fn header_height(&self) -> f32 {
+        match self {
+            Block::AppTitle(_) => APP_TITLE_H,
+            Block::Group { .. } => HEADER_H,
         }
     }
-    (first, second)
+
+    fn rows(&self) -> &[(String, String)] {
+        match self {
+            Block::AppTitle(_) => &[],
+            Block::Group { rows, .. } => rows,
+        }
+    }
+
+    fn with_rows(&self, rows: Vec<(String, String)>) -> Self {
+        match self {
+            Block::AppTitle(t) => Block::AppTitle(t.clone()),
+            Block::Group { title, .. } => Block::Group {
+                title: title.clone(),
+                rows,
+            },
+        }
+    }
 }
 
-/// 一栏面板：`ui.scope` 固定宽高 + 自绘半透明圆角底 + 大标题（可选）+ 分组滚动区。
-#[expect(clippy::too_many_arguments)]
-fn group_panel(
-    ui: &mut egui::Ui,
-    width: f32,
-    height: f32,
-    panel_key: &str,
-    title: &str,
-    groups: &[ShortcutGroup],
+/// 把数据源整理成待排版块：应用名大标题 + 应用菜单组 + 系统快捷键组。
+/// 读不出键位的条目（format_chord 返回 None）在这里被过滤掉。
+fn build_blocks(
+    sheet: &laterkey_platform_mac::CheatSheet,
     style: Style,
     display: &DisplayRules,
-    with_title: bool,
-) {
-    // scope/Frame 默认继承外层三栏的 horizontal 布局；面板内部必须显式竖排
-    ui.scope_builder(
-        egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::Min)),
-        |ui| {
-            ui.set_width(width);
-            ui.set_height(height);
-            let rect = ui.max_rect();
-            ui.painter().rect_filled(rect, PANEL_RADIUS, PANEL_BG);
-            egui::Frame::new()
-                .inner_margin(egui::Margin::same(PANEL_PAD as i8))
-                .show(ui, |ui| {
-                    if with_title && !title.is_empty() {
-                        header_bar(ui, title, 26.0, 13.5);
-                        ui.add_space(8.0);
-                    }
-                    egui::ScrollArea::vertical()
-                        .id_salt(egui::Id::new(("cheat-scroll", panel_key)))
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 10.0;
-                            for group in groups {
-                                header_bar(ui, &group.title, 24.0, 12.5);
-                                ui.add_space(4.0);
-                                for entry in &group.entries {
-                                    let Some(key) = laterkey_core::format_chord(
-                                        entry.modifiers,
-                                        &entry.key,
-                                        style,
-                                        display,
-                                    ) else {
-                                        continue;
-                                    };
-                                    shortcut_row(ui, &key, &entry.title);
-                                }
-                                ui.add_space(4.0);
-                            }
-                        });
-                });
-        },
-    );
+) -> Vec<Block> {
+    let app_name = if sheet.app_name.is_empty() {
+        "当前应用".to_string()
+    } else {
+        sheet.app_name.clone()
+    };
+    let group_block = |g: &ShortcutGroup| Block::Group {
+        title: g.title.clone(),
+        rows: g
+            .entries
+            .iter()
+            .filter_map(|e| {
+                laterkey_core::format_chord(e.modifiers, &e.key, style, display)
+                    .map(|k| (k, e.title.clone()))
+            })
+            .collect(),
+    };
+    let mut blocks = vec![Block::AppTitle(app_name)];
+    blocks.extend(sheet.app_groups.iter().map(&group_block));
+    blocks.extend(sheet.system_groups.iter().map(&group_block));
+    blocks
 }
 
-fn placeholder_panel(ui: &mut egui::Ui, width: f32, height: f32, text: &str, loading: bool) {
-    // scope/Frame 默认继承外层三栏的 horizontal 布局；面板内部必须显式竖排
-    ui.scope_builder(
-        egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::Min)),
+/// 按列高把块切成若干列（纯计算，只数行高——立即模式没法边画边换列）。
+/// 单组行数放不下时拆到下一列，下一列重复组标题（参考工具同款行为）；
+/// 一行都放不下时换列，直到排完。
+fn pack_columns(blocks: &[Block], col_h: f32) -> Vec<Vec<Block>> {
+    let mut cols: Vec<Vec<Block>> = vec![Vec::new()];
+    let mut cur_h = 0.0f32;
+    for block in blocks {
+        let mut remaining = block.rows();
+        loop {
+            let gap = if cur_h > 0.0 { GROUP_GAP } else { 0.0 };
+            let avail_rows = ((col_h - cur_h - gap - block.header_height()) / ROW_H).floor();
+            if avail_rows < 1.0 && !cols.last().is_some_and(|c| c.is_empty()) {
+                cols.push(Vec::new());
+                cur_h = 0.0;
+                continue;
+            }
+            if avail_rows < 1.0 {
+                // 空列都放不下一个标题条：放弃这条（避免死循环）
+                break;
+            }
+            let take = (avail_rows as usize).min(remaining.len());
+            cols.last_mut()
+                .unwrap()
+                .push(block.with_rows(remaining[..take].to_vec()));
+            cur_h += gap + block.header_height() + take as f32 * ROW_H;
+            remaining = &remaining[take..];
+            if remaining.is_empty() {
+                break;
+            }
+            cols.push(Vec::new());
+            cur_h = 0.0;
+        }
+    }
+    cols
+}
+
+// ---------------------------------------------------------------- 绘制
+
+fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loading: bool) {
+    let mut blocks = build_blocks(&st.data, st.style, &display);
+    if loading {
+        // 开窗后还没读到新数据：标题条提示，不空等（数据到了 version 变了自会刷新）
+        blocks.insert(
+            1,
+            Block::Group {
+                title: "正在读取当前应用的菜单…".to_string(),
+                rows: Vec::new(),
+            },
+        );
+    } else if st.data.app_groups.is_empty() {
+        // 读不到菜单的应用（不暴露辅助功能树）：给一句说明而不是空列
+        blocks.insert(
+            1,
+            Block::Group {
+                title: "读不到当前应用的菜单".to_string(),
+                rows: vec![("".to_string(), "该应用可能不暴露辅助功能树".to_string())],
+            },
+        );
+    }
+
+    let inner_w = ui.available_width();
+    let col_h = ui.available_height();
+    let col_w = ((inner_w - 2.0 * COL_GAP) / 3.0).min(340.0);
+    let cols = pack_columns(&blocks, col_h);
+    let cols_w = cols.len() as f32 * col_w + (cols.len().saturating_sub(1)) as f32 * COL_GAP;
+
+    ui.spacing_mut().item_spacing.x = COL_GAP;
+    // **不能用 ui.horizontal()**：egui 0.35 里 horizontal 只分配 interact_size.y
+    // （18px）高——必须 allocate_ui_with_layout 显式给全高（无头测试锁定该回归）
+    ui.allocate_ui_with_layout(
+        egui::vec2(inner_w.max(cols_w), col_h),
+        egui::Layout::left_to_right(egui::Align::Min),
         |ui| {
-            ui.set_width(width);
-            ui.set_height(height);
-            let rect = ui.max_rect();
-            ui.painter().rect_filled(rect, PANEL_RADIUS, PANEL_BG);
-            egui::Frame::new()
-                .inner_margin(egui::Margin::same(PANEL_PAD as i8))
-                .show(ui, |ui| {
-                    ui.set_width(width - PANEL_PAD * 2.0);
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(height * 0.35);
-                        if loading {
-                            ui.add(egui::Spinner::new().size(18.0));
-                            ui.add_space(8.0);
+            for col in &cols {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(col_w, col_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(col_w);
+                        ui.set_height(col_h);
+                        for block in col {
+                            draw_block(ui, block, col_w);
                         }
-                        ui.label(RichText::new(text).size(12.0).color(MUTED));
-                    });
-                });
+                    },
+                );
+            }
         },
     );
 }
 
-/// 居中标题条：整宽圆角浅色块 + 加粗白字（截图里的「ZCode / 调度中心」样式）。
-fn header_bar(ui: &mut egui::Ui, title: &str, height: f32, font: f32) {
+fn draw_block(ui: &mut egui::Ui, block: &Block, col_w: f32) {
+    match block {
+        Block::AppTitle(title) => header_bar(ui, title, APP_TITLE_H, 13.5, col_w),
+        Block::Group { title, rows } => {
+            header_bar(ui, title, HEADER_H, 12.5, col_w);
+            ui.add_space(2.0);
+            for (key, name) in rows {
+                shortcut_row(ui, key, name);
+            }
+        }
+    }
+}
+
+/// 居中标题条：整宽圆角浅色块 + 白字，超宽截断（截图里的「ZCode / 调度中心」样式）。
+fn header_bar(ui: &mut egui::Ui, title: &str, height: f32, font: f32, col_w: f32) {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::hover(),
     );
     ui.painter().rect_filled(rect, HEADER_RADIUS, HEADER_BG);
+    let text = truncate_to_width(ui, title, FontId::proportional(font), col_w - 20.0);
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
-        title,
-        egui::FontId::proportional(font),
+        text,
+        FontId::proportional(font),
         KEY_TEXT,
     );
 }
 
 /// 一行快捷键：分配矩形是**整行宽**，键右对齐到键列，名称紧随其后——
-/// 名称也画在矩形内，下一行才不会和它叠在一起。
+/// 名称也画在矩形内（超宽截断加 …），下一行才不会和它叠在一起。
 fn shortcut_row(ui: &mut egui::Ui, key: &str, name: &str) {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_H),
@@ -386,16 +432,43 @@ fn shortcut_row(ui: &mut egui::Ui, key: &str, name: &str) {
         egui::pos2(key_x, rect.center().y),
         Align2::RIGHT_CENTER,
         key,
-        egui::FontId::proportional(12.0),
+        FontId::proportional(12.0),
         KEY_TEXT,
     );
+    let name_x = key_x + 8.0;
+    let max_w = (rect.right() - name_x).max(20.0);
+    let name = truncate_to_width(ui, name, FontId::proportional(12.0), max_w);
     ui.painter().text(
-        egui::pos2(key_x + 10.0, rect.center().y),
+        egui::pos2(name_x, rect.center().y),
         Align2::LEFT_CENTER,
         name,
-        egui::FontId::proportional(12.0),
+        FontId::proportional(12.0),
         NAME_TEXT,
     );
+}
+
+/// 文本超宽时逐字截断加 …（行短、频率高，简单实现就够）。
+fn truncate_to_width(ui: &egui::Ui, text: &str, font: FontId, max_w: f32) -> String {
+    let measure = |s: &str| {
+        ui.painter()
+            .layout_no_wrap(s.to_owned(), font.clone(), NAME_TEXT)
+            .size()
+            .x
+    };
+    if measure(text) <= max_w {
+        return text.to_string();
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    while chars.len() > 1 {
+        chars.pop();
+        let mut candidate = chars.clone();
+        candidate.push('…');
+        let s: String = candidate.into_iter().collect();
+        if measure(&s) <= max_w {
+            return s;
+        }
+    }
+    "…".to_string()
 }
 
 // ---------------------------------------------------------------- 迷你控件
@@ -417,7 +490,7 @@ fn close_button(ui: &mut egui::Ui, st: &mut CheatState) {
             rect.center(),
             Align2::CENTER_CENTER,
             "×",
-            egui::FontId::proportional(14.0),
+            FontId::proportional(14.0),
             if resp.hovered() { KEY_TEXT } else { MUTED },
         );
     }
@@ -451,7 +524,7 @@ fn style_switch(ui: &mut egui::Ui, st: &mut CheatState) {
                         rect.center(),
                         Align2::CENTER_CENTER,
                         label,
-                        egui::FontId::proportional(11.0),
+                        FontId::proportional(11.0),
                         if selected { KEY_TEXT } else { MUTED },
                     );
                 }
@@ -476,7 +549,7 @@ pub fn fetch_in_background(shared: Arc<Shared>, pid: i32) {
 #[cfg(test)]
 mod headless_layout_tests {
     use super::*;
-    use laterkey_core::{ShortcutEntry, ShortcutGroup, ShortcutKey};
+    use laterkey_core::{ShortcutEntry, ShortcutKey};
 
     fn entry(title: &str) -> ShortcutEntry {
         ShortcutEntry {
@@ -493,10 +566,16 @@ mod headless_layout_tests {
         };
         laterkey_platform_mac::CheatSheet {
             app_name: "ZCode".into(),
-            app_groups: vec![ShortcutGroup {
-                title: "Apple".into(),
-                entries: vec![entry("强制退出")],
-            }],
+            app_groups: vec![
+                ShortcutGroup {
+                    title: "Apple".into(),
+                    entries: vec![entry("强制退出"), entry("退出登录"), entry("锁屏")],
+                },
+                ShortcutGroup {
+                    title: "文件".into(),
+                    entries: (0..30).map(|i| entry(&format!("条目{i}"))).collect(),
+                },
+            ],
             system_groups: vec![
                 sys_group("调度中心", 8),
                 sys_group("聚焦", 4),
@@ -505,16 +584,7 @@ mod headless_layout_tests {
         }
     }
 
-    /// 面板底（PANEL_BG）的图元竖向必须覆盖控件行下方到窗口底部，
-    /// 即三栏都要撑满全高（回归：Frame+set_min_height 撑不起高度的历史缺陷）。
-    #[test]
-    fn panels_fill_full_height() {
-        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-        let shared = Arc::new(laterkey_platform_mac::Shared::new(tx, false));
-        shared.set_cheatsheet(Arc::new(fake_sheet()));
-        let view = CheatSheetView::new(shared.clone());
-        view.prepare_open(false, 0);
-
+    fn tessellate(view: &CheatSheetView) -> Vec<egui::epaint::ClippedPrimitive> {
         let ctx = egui::Context::default();
         let raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -538,10 +608,21 @@ mod headless_layout_tests {
                 view.draw(ui, laterkey_core::DisplayRules::default())
             });
         let out = ctx.end_pass();
-        let prims = ctx.tessellate(out.shapes, 1.0);
+        ctx.tessellate(out.shapes, 1.0)
+    }
+
+    /// 面板底（PANEL_BG）图元必须铺满整窗（回归：ui.horizontal 18px 陷阱、
+    /// Frame+set_min_height 旧缺陷——浮层只画到内容高度）。
+    #[test]
+    fn overlay_fills_full_window() {
+        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+        let shared = Arc::new(laterkey_platform_mac::Shared::new(tx, false));
+        shared.set_cheatsheet(Arc::new(fake_sheet()));
+        let view = CheatSheetView::new(shared.clone());
+        view.prepare_open(false, 0);
+        let prims = tessellate(&view);
 
         // 面板底是半透明色，tessellate 后顶点色可能按预乘 alpha 落盘，两者都认
-        let unmultiplied = PANEL_BG;
         let premul = |c: u8| (c as u32 * PANEL_BG.a() as u32 / 255) as u8;
         let premultiplied = egui::Color32::from_rgba_premultiplied(
             premul(PANEL_BG.r()),
@@ -549,7 +630,7 @@ mod headless_layout_tests {
             premul(PANEL_BG.b()),
             PANEL_BG.a(),
         );
-        let is_panel_bg = |c: egui::Color32| c == unmultiplied || c == premultiplied;
+        let is_panel_bg = |c: egui::Color32| c == PANEL_BG || c == premultiplied;
 
         let mut min_y = f32::MAX;
         let mut max_y = f32::MIN;
@@ -565,14 +646,49 @@ mod headless_layout_tests {
         }
         let height = max_y - min_y;
         assert!(
-            max_y > 640.0,
-            "面板底没到窗口底部: 图元 y 范围 {min_y:.0}..{max_y:.0}"
+            min_y < 20.0 && max_y > SIZE[1] - 20.0,
+            "浮层底没铺满整窗: 图元 y 范围 {min_y:.0}..{max_y:.0}（期望 ≈0..{}）",
+            SIZE[1]
         );
-        // 顶部控件行（口径切换 + ×）约占 30px，面板底从其下方一直铺到窗口底
         assert!(
-            height > 600.0,
-            "面板底竖向只覆盖 {height:.0}px（期望 ≈{}-顶部控件行）",
-            { SIZE[1] }
+            height > SIZE[1] - 40.0,
+            "浮层底竖向只覆盖 {height:.0}px（期望 ≈{}）",
+            SIZE[1]
+        );
+    }
+
+    /// 行多的组要拆列续排（下一列重复标题），而不是溢出/截断消失。
+    #[test]
+    fn long_groups_flow_into_next_column() {
+        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+        let shared = Arc::new(laterkey_platform_mac::Shared::new(tx, false));
+        shared.set_cheatsheet(Arc::new(fake_sheet()));
+        let view = CheatSheetView::new(shared.clone());
+        view.prepare_open(false, 0);
+
+        let blocks = build_blocks(
+            &shared.cheatsheet(),
+            Style::Mac,
+            &laterkey_core::DisplayRules::default(),
+        );
+        let col_h = SIZE[1] - OVERLAY_PAD * 2.0 - 26.0;
+        let cols = pack_columns(&blocks, col_h);
+        assert!(cols.len() >= 2, "40+ 行内容应拆成多列，实际 {cols:?} 列");
+        // 同一组标题出现两次 = 跨列续排
+        let titles: Vec<String> = cols
+            .iter()
+            .flatten()
+            .filter_map(|b| match b {
+                Block::Group { title, rows } if !rows.is_empty() => Some(title.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut sorted = titles.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert!(
+            sorted.len() < titles.len(),
+            "应有组标题跨列重复（拆列续排），实际 {titles:?}"
         );
     }
 }

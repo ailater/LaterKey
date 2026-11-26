@@ -14,7 +14,7 @@ use std::ffi::{c_void, CStr, CString};
 use laterkey_core::{
     ax_modifiers_to_flags,
     flags::{ALTERNATE, COMMAND, CONTROL, SECONDARY_FN, SHIFT},
-    ShortcutEntry, ShortcutGroup, ShortcutKey,
+    keys, ShortcutEntry, ShortcutGroup, ShortcutKey,
 };
 
 use super::cf::{self, Cf};
@@ -227,27 +227,72 @@ const HOTKEY_APP_ID: &CStr = c"com.apple.symbolichotkeys";
 const HOTKEY_KEY: &CStr = c"AppleSymbolicHotKeys";
 
 /// 内置的 id →（分组，名称）对照。plist 里只有 id；不在表里的 id 跳过。
-const KNOWN_HOTKEYS: &[(i64, &str, &str)] = &[
-    (32, "调度中心", "调度中心"),
-    (33, "调度中心", "应用窗口"),
-    (36, "调度中心", "显示桌面"),
-    (160, "调度中心", "启动台"),
-    (79, "调度中心", "向左移动一个空间"),
-    (81, "调度中心", "向右移动一个空间"),
-    (118, "调度中心", "切换到桌面 1"),
-    (119, "调度中心", "切换到桌面 2"),
-    (120, "调度中心", "切换到桌面 3"),
-    (121, "调度中心", "切换到桌面 4"),
-    (64, "聚焦", "聚焦搜索"),
-    (65, "聚焦", "访达搜索"),
+/// 无出厂默认值的哨兵：这类 id 只在用户 plist 里有条目时才显示。
+const NO_DEFAULT: u64 = u64::MAX;
+
+/// 已知 symbolic hotkey 的内置表：id →（分组，名称，出厂默认修饰键，出厂默认虚拟键码）。
+/// 顺序即显示顺序。用户 plist 里有条目且启用 → 用实时值；没有条目或读不出
+/// 键位 → 用出厂默认兜底（截屏组等 macOS 默认不落盘，参考工具也是这么列的）；
+/// 条目存在但被用户禁用 → 不显示（再按出厂值列出来就是说谎）。
+/// 出厂值取自 Apple 公开默认键位；分组归属沿用本机实测修正（60/61=输入法）。
+const KNOWN_HOTKEYS: &[(i64, &str, &str, u64, i64)] = &[
+    (
+        52,
+        "启动台和程序坞",
+        "打开或关闭隐藏程序坞",
+        ALTERNATE | COMMAND,
+        0x02,
+    ),
+    (160, "启动台和程序坞", "启动台", NO_DEFAULT, 0),
+    (32, "调度中心", "调度中心", CONTROL, keys::UP),
+    (33, "调度中心", "应用窗口", CONTROL, keys::DOWN),
+    (36, "调度中心", "显示桌面", 0, 0x67), // F11
+    (79, "调度中心", "向左移动一个空间", CONTROL, keys::LEFT),
+    (81, "调度中心", "向右移动一个空间", CONTROL, keys::RIGHT),
+    (118, "调度中心", "切换到桌面 1", CONTROL, 0x12),
+    (119, "调度中心", "切换到桌面 2", CONTROL, 0x13),
+    (120, "调度中心", "切换到桌面 3", CONTROL, 0x14),
+    (121, "调度中心", "切换到桌面 4", CONTROL, 0x15),
     // 2026-11-25 本机实测修正：60/61 是输入法切换（ROADMAP 旧对照写成了移动空间）
-    (60, "输入法", "选择上一个输入法"),
-    (61, "输入法", "选择下一个输入法"),
-    (28, "屏幕快照", "将屏幕图片存储为文件"),
-    (29, "屏幕快照", "将屏幕图片拷贝到剪贴板"),
-    (30, "屏幕快照", "将所选区域的图片存储为文件"),
-    (31, "屏幕快照", "将所选区域的图片拷贝到剪贴板"),
-    (184, "屏幕快照", "截屏和录制选项"),
+    (60, "输入法", "选择上一个输入法", CONTROL, keys::SPACE),
+    (
+        61,
+        "输入法",
+        "选择下一个输入法",
+        CONTROL | ALTERNATE,
+        keys::SPACE,
+    ),
+    (
+        28,
+        "屏幕快照",
+        "将屏幕图片存储为文件",
+        SHIFT | COMMAND,
+        0x14,
+    ), // 3
+    (
+        29,
+        "屏幕快照",
+        "将屏幕图片拷贝到剪贴板",
+        CONTROL | SHIFT | COMMAND,
+        0x14,
+    ),
+    (
+        30,
+        "屏幕快照",
+        "将所选区域的图片存储为文件",
+        SHIFT | COMMAND,
+        0x15,
+    ), // 4
+    (
+        31,
+        "屏幕快照",
+        "将所选区域的图片拷贝到剪贴板",
+        CONTROL | SHIFT | COMMAND,
+        0x15,
+    ),
+    (184, "屏幕快照", "截屏和录制选项", SHIFT | COMMAND, 0x17), // 5
+    (64, "聚焦", "聚焦搜索", COMMAND, keys::SPACE),
+    (65, "聚焦", "访达搜索", ALTERNATE | COMMAND, keys::SPACE),
 ];
 
 /// symbolic hotkeys 的修饰键掩码是 CGEventFlags 风格；只留类别位，
@@ -262,11 +307,63 @@ fn hotkey_modifier_mask(raw: i64) -> u64 {
 fn known_hotkey(id: i64) -> Option<(&'static str, &'static str)> {
     KNOWN_HOTKEYS
         .iter()
-        .find(|(known, _, _)| *known == id)
-        .map(|(_, group, title)| (*group, *title))
+        .find(|(known, _, _, _, _)| *known == id)
+        .map(|(_, group, title, _, _)| (*group, *title))
 }
 
-/// 读系统快捷键。只列「内置表认识且已启用」的条目，按分组聚合。
+/// plist 里一个 symbolic hotkey 条目的读取结果。
+enum PlistHotkey {
+    /// 字典里没有这个 id
+    Missing,
+    /// 条目存在但 enabled=false（用户明确关掉，不显示任何键位）
+    Disabled,
+    /// 条目存在且解析出了键位（键，原始修饰键掩码）
+    Parsed(ShortcutKey, i64),
+    /// 条目存在但读不出键位（值形状不对/参数残缺）
+    Unparsed,
+}
+
+/// 从 AppleSymbolicHotKeys 字典读一个 id。
+///
+/// # Safety
+///
+/// `dict` 必须是有效的 CFDictionary。
+unsafe fn plist_hotkey(dict: CFTypeRef, id: i64) -> PlistHotkey {
+    // SAFETY: dict 是有效 CFDictionary；取出的值由它持有
+    let Some(entry) = (unsafe {
+        let key = cf::cfstr(&CString::new(id.to_string()).unwrap());
+        cf::dict_get(dict, key.as_cf())
+    }) else {
+        return PlistHotkey::Missing;
+    };
+    // SAFETY: entry 必须先校验是字典（不是就跳过，绝不能直接取值）
+    if !unsafe { cf::is_dictionary(entry) } {
+        return PlistHotkey::Unparsed;
+    }
+    // SAFETY: entry 是有效 CFDictionary
+    let enabled = unsafe {
+        cf::dict_get(entry, cf::cfstr(c"enabled").as_cf())
+            .filter(|v| cf::is_boolean(*v))
+            .map(|v| CFBooleanGetValue(v))
+    };
+    if enabled == Some(false) {
+        return PlistHotkey::Disabled;
+    }
+    // SAFETY: entry 是有效 CFDictionary
+    unsafe {
+        cf::dict_get(entry, cf::cfstr(c"value").as_cf())
+            .filter(|v| cf::is_dictionary(*v))
+            .and_then(|v| cf::dict_get(v, cf::cfstr(c"parameters").as_cf()))
+            .filter(|v| cf::is_array(*v))
+            .and_then(|parameters| parse_hotkey_parameters(parameters))
+            .map_or(PlistHotkey::Unparsed, |(key, raw)| {
+                PlistHotkey::Parsed(key, raw)
+            })
+    }
+}
+
+/// 读系统快捷键。内置表认识且未被用户禁用的条目，按分组聚合；
+/// plist 没有条目的用出厂默认值兜底。
 pub fn read_system_shortcuts() -> Vec<ShortcutGroup> {
     // SAFETY: 只读查询；返回值带一个引用，交给 Cf 释放
     let raw = unsafe {
@@ -280,39 +377,17 @@ pub fn read_system_shortcuts() -> Vec<ShortcutGroup> {
     }
     let dict = raw.as_cf();
     let mut groups: Vec<ShortcutGroup> = Vec::new();
-    for &(id, group, title) in KNOWN_HOTKEYS {
-        // SAFETY: dict 是有效 CFDictionary；取出的值由它持有
-        let Some(entry) = (unsafe {
-            let key = cf::cfstr(&CString::new(id.to_string()).unwrap());
-            cf::dict_get(dict, key.as_cf())
-        }) else {
-            continue;
-        };
-        // SAFETY: entry 必须先校验是字典（不是就跳过，绝不能直接取值）
-        if !unsafe { cf::is_dictionary(entry) } {
-            continue;
-        }
-        // SAFETY: entry 是有效 CFDictionary
-        let Some(enabled) = (unsafe {
-            cf::dict_get(entry, cf::cfstr(c"enabled").as_cf())
-                .filter(|v| cf::is_boolean(*v))
-                .map(|v| CFBooleanGetValue(v))
-        }) else {
-            continue;
-        };
-        if !enabled {
-            continue;
-        }
-        // SAFETY: entry 是有效 CFDictionary
-        let parsed = unsafe {
-            cf::dict_get(entry, cf::cfstr(c"value").as_cf())
-                .filter(|v| cf::is_dictionary(*v))
-                .and_then(|v| cf::dict_get(v, cf::cfstr(c"parameters").as_cf()))
-                .filter(|v| cf::is_array(*v))
-                .map(|parameters| parse_hotkey_parameters(parameters))
-        };
-        let Some(Some((key, raw_modifiers))) = parsed else {
-            continue;
+    for &(id, group, title, def_mods, def_key) in KNOWN_HOTKEYS {
+        // SAFETY: dict 是有效 CFDictionary
+        let (key, modifiers) = match (unsafe { plist_hotkey(dict, id) }, def_mods) {
+            (PlistHotkey::Disabled, _) => continue,
+            (PlistHotkey::Parsed(key, raw_modifiers), _) => {
+                (key, hotkey_modifier_mask(raw_modifiers))
+            }
+            (PlistHotkey::Missing | PlistHotkey::Unparsed, NO_DEFAULT) => continue,
+            (PlistHotkey::Missing | PlistHotkey::Unparsed, def_mods) => {
+                (ShortcutKey::VirtualKey(def_key), def_mods)
+            }
         };
         let group_entry = match groups.iter_mut().find(|g| g.title == group) {
             Some(g) => g,
@@ -327,7 +402,7 @@ pub fn read_system_shortcuts() -> Vec<ShortcutGroup> {
         group_entry.entries.push(ShortcutEntry {
             title: title.to_string(),
             key,
-            modifiers: hotkey_modifier_mask(raw_modifiers),
+            modifiers,
         });
     }
     groups

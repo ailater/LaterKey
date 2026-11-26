@@ -156,8 +156,9 @@ pub fn key_label(key: &ShortcutKey) -> Option<String> {
     }
 }
 
-/// 修饰键的显示名。Mac 口径按系统习惯 ⌃→⌥→⇧→⌘；物理口径按 Windows
-/// 惯例 Win 最先（⌃⌘ 显示为 Win+Ctrl），其余 Ctrl→Shift→Alt。
+/// 修饰键的显示名。物理口径按 Windows 惯例 Win 最先（⌃⌘ 显示为
+/// Win+Ctrl），其余 Ctrl→Shift→Alt；Mac 口径用系统键帽符号
+/// （fn⌃⌥⇧⌘，见 [`format_chord`]），一般不再经过这里。
 pub fn modifier_labels(modifiers: u64, style: Style, d: &DisplayRules) -> Vec<String> {
     let push = |out: &mut Vec<String>, on: bool, label: &str| {
         if on {
@@ -189,7 +190,9 @@ pub fn modifier_labels(modifiers: u64, style: Style, d: &DisplayRules) -> Vec<St
     out
 }
 
-/// 一条快捷键的完整显示文本，如 `Ctrl+Shift+C` / `Command+Shift+C`。
+/// 一条快捷键的完整显示文本。物理口径 `Ctrl+Shift+C`；Mac 口径是系统
+/// 键帽符号的紧凑串（`⇧⌘C`、`fn⌘D`），顺序 fn→⌃→⌥→⇧→⌘。键帽符号的
+/// 字形由 font.rs 的 SF 兜底链提供（SFNS.ttf 实测齐全）。
 /// 主键都读不出来时返回 None（调用方跳过该条）。
 pub fn format_chord(
     modifiers: u64,
@@ -198,6 +201,26 @@ pub fn format_chord(
     d: &DisplayRules,
 ) -> Option<String> {
     let key = key_label(key)?;
+    if style == Style::Mac {
+        let mut out = String::new();
+        if modifiers & flags::SECONDARY_FN != 0 {
+            out.push_str("fn ");
+        }
+        if modifiers & flags::CONTROL != 0 {
+            out.push('⌃');
+        }
+        if modifiers & flags::ALTERNATE != 0 {
+            out.push('⌥');
+        }
+        if modifiers & flags::SHIFT != 0 {
+            out.push('⇧');
+        }
+        if modifiers & flags::COMMAND != 0 {
+            out.push('⌘');
+        }
+        out.push_str(&key);
+        return Some(out);
+    }
     let mut parts = modifier_labels(modifiers, style, d);
     parts.push(key);
     Some(parts.join("+"))
@@ -253,7 +276,7 @@ mod tests {
         );
         assert_eq!(
             format_chord(COMMAND, &c, Style::Mac, &d).as_deref(),
-            Some("Command+C")
+            Some("⌘C")
         );
         // ⌃⌘Q：物理口径 Win+Ctrl+Q（ROADMAP 的例子）
         let q = ShortcutKey::Char("Q".into());
@@ -261,7 +284,11 @@ mod tests {
             format_chord(CONTROL | COMMAND, &q, Style::Physical, &d).as_deref(),
             Some("Win+Ctrl+Q")
         );
-        // ⇧⌥⌘3：物理口径 Ctrl→Shift→Alt（Windows 惯例），Mac 口径 Option 在 ⇧ 前
+        assert_eq!(
+            format_chord(CONTROL | COMMAND, &q, Style::Mac, &d).as_deref(),
+            Some("⌃⌘Q")
+        );
+        // ⇧⌥⌘3：物理口径 Ctrl→Shift→Alt（Windows 惯例），Mac 口径 fn→⌃→⌥→⇧→⌘
         let three = ShortcutKey::Char("3".into());
         assert_eq!(
             format_chord(SHIFT | ALTERNATE | COMMAND, &three, Style::Physical, &d).as_deref(),
@@ -269,13 +296,17 @@ mod tests {
         );
         assert_eq!(
             format_chord(SHIFT | ALTERNATE | COMMAND, &three, Style::Mac, &d).as_deref(),
-            Some("Option+Shift+Command+3")
+            Some("⌥⇧⌘3")
         );
         // fn+D：fn 在最前
         let dd = ShortcutKey::Char("D".into());
         assert_eq!(
             format_chord(SECONDARY_FN, &dd, Style::Physical, &d).as_deref(),
             Some("fn+D")
+        );
+        assert_eq!(
+            format_chord(SECONDARY_FN, &dd, Style::Mac, &d).as_deref(),
+            Some("fn D")
         );
     }
 
