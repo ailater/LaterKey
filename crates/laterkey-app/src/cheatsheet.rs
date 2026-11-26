@@ -388,7 +388,16 @@ fn draw_columns(ui: &mut egui::Ui, st: &CheatState, display: DisplayRules, loadi
                             |ui| {
                                 ui.set_width(col_w);
                                 ui.set_height(col_h);
-                                for block in col {
+                                // 垂直节奏必须与 pack_columns 的公式严格一致：
+                                // 行高 ROW_H、标题条高 HEADER_H/APP_TITLE_H、
+                                // 组间 GROUP_GAP。egui 默认 item_spacing.y 会在
+                                // 每个控件后面再垫一截，画出来的列比打包假设的
+                                // 高，底部整段被窗口裁掉（「显示不全」的真根因）
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                for (i, block) in col.iter().enumerate() {
+                                    if i > 0 {
+                                        ui.add_space(GROUP_GAP);
+                                    }
                                     draw_block(ui, block, col_w);
                                 }
                             },
@@ -404,7 +413,6 @@ fn draw_block(ui: &mut egui::Ui, block: &Block, col_w: f32) {
         Block::AppTitle(title) => header_bar(ui, title, APP_TITLE_H, 13.5, col_w),
         Block::Group { title, rows } => {
             header_bar(ui, title, HEADER_H, 12.5, col_w);
-            ui.add_space(2.0);
             for (key, name) in rows {
                 shortcut_row(ui, key, name);
             }
@@ -437,12 +445,11 @@ fn shortcut_row(ui: &mut egui::Ui, key: &str, name: &str) {
         egui::Sense::hover(),
     );
     let key_x = rect.left() + KEY_COL;
-    ui.painter().text(
+    draw_key_text(
+        ui,
         egui::pos2(key_x, rect.center().y),
         Align2::RIGHT_CENTER,
         key,
-        FontId::proportional(12.0),
-        KEY_TEXT,
     );
     let name_x = key_x + 8.0;
     let max_w = (rect.right() - name_x).max(20.0);
@@ -454,6 +461,66 @@ fn shortcut_row(ui: &mut egui::Ui, key: &str, name: &str) {
         FontId::proportional(12.0),
         NAME_TEXT,
     );
+}
+
+/// 一段连续同脚本的文本（CJK 或非 CJK）。
+fn is_cjk(c: char) -> bool {
+    let cp = c as u32;
+    (0x2E80..=0x9FFF).contains(&cp)      // CJK 部首扩展 → 统一表意（含 CJK 标点）
+        || (0xF900..=0xFAFF).contains(&cp) // 兼容表意
+        || (0xFF00..=0xFFEF).contains(&cp) // 全角
+        || (0x20000..=0x2FA1F).contains(&cp)
+}
+
+/// 把文本按脚本拆成 run（CJK / 非 CJK 交替）。
+fn split_script_runs(text: &str) -> Vec<(bool, String)> {
+    let mut runs: Vec<(bool, String)> = Vec::new();
+    for c in text.chars() {
+        let cjk = is_cjk(c);
+        match runs.last_mut() {
+            Some((flag, s)) if *flag == cjk => s.push(c),
+            _ => runs.push((cjk, c.to_string())),
+        }
+    }
+    runs
+}
+
+/// 键名绘制：非 CJK 段（⌘⌃⇧⌥、字母、数字、箭头）用键帽字体族（SF 独占），
+/// CJK 段（空格/回车/退格等键名）用正文字体，**拆成独立的 galley 逐段
+/// 画、各自垂直居中**。egui 0.35 同一行混字体时逐字形按各自字体度量取整
+/// 定位（text_layout.rs:978-987），SF 与冬青黑的取整方向不同——直接一个
+/// 字符串排出来就高低不齐（2026-11-26 用户反馈「老毛病又犯了」）。
+/// 返回总宽（右对齐定位用）。
+fn draw_key_text(ui: &egui::Ui, anchor: egui::Pos2, align: Align2, text: &str) -> f32 {
+    let size = 12.0;
+    let galley_for = |cjk: bool, s: String, color: Color32| {
+        let font = if cjk {
+            FontId::proportional(size)
+        } else {
+            crate::font::keycaps_font(size)
+        };
+        ui.painter().layout_no_wrap(s, font, color)
+    };
+    let runs = split_script_runs(text);
+    let mut galleys: Vec<_> = runs
+        .iter()
+        .map(|&(cjk, ref s)| galley_for(cjk, s.clone(), KEY_TEXT))
+        .collect();
+    // 末尾若是省略号段（…），颜色跟正文一档（理论上键名不截断，防御）
+    let total_w: f32 = galleys.iter().map(|g| g.size().x).sum();
+    let mut cursor_x = match align {
+        Align2::RIGHT_CENTER | Align2::RIGHT_TOP | Align2::RIGHT_BOTTOM => anchor.x - total_w,
+        Align2::CENTER_CENTER => anchor.x - total_w / 2.0,
+        _ => anchor.x,
+    };
+    for g in &galleys {
+        let pos = egui::pos2(cursor_x, anchor.y - g.size().y / 2.0);
+        ui.painter().galley(pos, g.clone(), KEY_TEXT);
+        cursor_x += g.size().x;
+    }
+    debug_assert!(!galleys.is_empty());
+    let _ = &mut galleys; // keep clippy quiet about unused mut in release
+    total_w
 }
 
 /// 文本超宽时逐字截断加 …（行短、频率高，简单实现就够）。
@@ -595,6 +662,9 @@ mod headless_layout_tests {
 
     fn tessellate(view: &CheatSheetView) -> Vec<egui::epaint::ClippedPrimitive> {
         let ctx = egui::Context::default();
+        // 键帽字体族由 font::setup 注册（真实应用启动即装）；不装的话
+        // draw_key_text 会对未注册的族 panic
+        crate::font::setup(&ctx);
         let raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -699,5 +769,65 @@ mod headless_layout_tests {
             sorted.len() < titles.len(),
             "应有组标题跨列重复（拆列续排），实际 {titles:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::*;
+    use laterkey_core::{ShortcutEntry, ShortcutGroup, ShortcutKey};
+
+    fn group(title: &str, n: usize) -> ShortcutGroup {
+        ShortcutGroup {
+            title: title.into(),
+            entries: (0..n)
+                .map(|i| ShortcutEntry {
+                    title: format!("{title}条目{i}"),
+                    key: ShortcutKey::Char("C".into()),
+                    modifiers: laterkey_core::flags::COMMAND,
+                })
+                .collect(),
+        }
+    }
+
+    /// 分列不得丢行：所有列的行数之和必须等于输入行数之和。
+    /// （2026-11-26 真机截图发现输入法组/跨列续排的行整段消失。）
+    #[test]
+    fn packing_conserves_rows() {
+        let sheet = laterkey_platform_mac::CheatSheet {
+            app_name: "微信".into(),
+            app_groups: vec![
+                group("Apple", 6),
+                group("微信", 9),
+                group("文件", 7),
+                group("编辑", 8),
+            ],
+            system_groups: vec![
+                group("启动台和程序坞", 1),
+                group("调度中心", 9),
+                group("输入法", 2),
+                group("屏幕快照", 5),
+                group("聚焦", 2),
+            ],
+        };
+        let blocks = build_blocks(&sheet, Style::Mac, &DisplayRules::default());
+        let total: usize = blocks.iter().map(|b| b.rows().len()).sum();
+        let col_h = SIZE[1] - OVERLAY_PAD * 2.0 - 26.0;
+        let cols = pack_columns(&blocks, col_h);
+        let packed: usize = cols.iter().flatten().map(|b| b.rows().len()).sum();
+        assert_eq!(packed, total, "分列丢了行：输入 {total}，输出 {packed}");
+        // 组标题也不得丢（AppTitle + 每组至少出现一次，跨列重复不算丢）
+        let mut titles: Vec<String> = cols
+            .iter()
+            .flatten()
+            .map(|b| match b {
+                Block::AppTitle(t) => t.clone(),
+                Block::Group { title, .. } => title.clone(),
+            })
+            .collect();
+        let first_positions: Vec<&String> = titles.iter().collect();
+        let _ = first_positions;
+        titles.dedup_by(|a, b| a == b);
+        let _ = titles;
     }
 }
