@@ -19,7 +19,7 @@ pub struct Toggles {
     pub win_key_clipboard: bool,
     pub task_manager: bool,
     pub settings_hotkey: bool,
-    /// 长按物理 Ctrl 3 秒呼出快捷键速览浮窗
+    /// 长按物理 Ctrl 2 秒呼出快捷键速览浮窗
     pub shortcuts_peek: bool,
     /// 隐藏菜单栏图标（仅界面状态，不进规则编译；恢复入口 = Ctrl+Alt+K）
     pub hide_tray_icon: bool,

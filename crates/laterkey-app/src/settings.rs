@@ -567,7 +567,7 @@ fn keys_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
             *changed |= row(
                 ui,
                 "快捷键速览",
-                "长按 Ctrl 3 秒浮窗速览当前应用与系统快捷键（托盘菜单也可手动呼出）",
+                "长按 Ctrl 2 秒浮窗速览当前应用与系统快捷键（托盘菜单也可手动呼出）",
                 &mut t.shortcuts_peek,
             );
         });

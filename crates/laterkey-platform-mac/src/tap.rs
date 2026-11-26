@@ -116,7 +116,7 @@ pub struct Shared {
     /// 规则换过之后，拦截线程要把状态机重置一次（避免沿用旧规则的状态）
     pub tap_needs_reset: AtomicBool,
     /// 长按 Ctrl 速览手势：裸 Ctrl 按住的起点（毫秒时间戳，0=没在跟踪）。
-    /// 拦截线程写，worker 读并统一裁决触发/作废——回调里不能等 3 秒
+    /// 拦截线程写，worker 读并统一裁决触发/作废——回调里不能等待
     pub peek_since: AtomicU64,
     /// 快捷键速览浮窗的开窗请求序号（worker 手势 / 托盘菜单各 +1，GUI 轮询）
     pub cheatsheet_seq: AtomicU64,
@@ -433,9 +433,9 @@ unsafe fn dispatch(ctx: &mut TapCtx, ty: u32, event: CGEventRef) -> CGEventRef {
 }
 
 impl TapCtx {
-    /// 长按 Ctrl 3 秒 → 快捷键速览的「按住起点」记录（含作废）。
+    /// 长按 Ctrl（2 秒）→ 快捷键速览的「按住起点」记录（含作废）。
     ///
-    /// 这里只写一个时间戳，3 秒的等待由 worker 每轮裁决；期间敲任何键、
+    /// 这里只写一个时间戳，等待由 worker 每轮裁决；期间敲任何键、
     /// 按别的修饰键、点鼠标都算手势作废。速览不是组合键的前置。
     ///
     /// # Safety

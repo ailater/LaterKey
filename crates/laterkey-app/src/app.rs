@@ -393,7 +393,7 @@ fn key_rules(rules: &Rules) -> Vec<(&'static str, bool)> {
         ("Ctrl+←/→/退格 按词跳转/删除（⌥）", rules.ctrl_arrows),
         ("Win(⌘)+L 锁屏", rules.win_key_lock),
         ("Win(⌘)+V 剪贴板历史", rules.win_key_clipboard),
-        ("长按 Ctrl 3 秒呼出快捷键速览", rules.shortcuts_peek),
+        ("长按 Ctrl 2 秒呼出快捷键速览", rules.shortcuts_peek),
     ]
 }
 

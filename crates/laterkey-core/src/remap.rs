@@ -145,7 +145,7 @@ pub struct Rules {
     pub task_manager: bool,
     /// 全局快捷键：物理 Ctrl+Alt+K 唤出设置面板（隐藏托盘图标后的恢复入口）
     pub settings_hotkey: bool,
-    /// 快捷键速览：长按物理 Ctrl 3 秒呼出浮窗
+    /// 快捷键速览：长按物理 Ctrl 2 秒呼出浮窗
     pub shortcuts_peek: bool,
     pub substitutes: Vec<Substitute>,
 }

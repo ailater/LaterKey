@@ -27,8 +27,8 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const TILE_INTERVAL: Duration = Duration::from_secs(2);
 /// 贴回时等前台切回目标应用的上限。超时不贴——宁可不贴也不能贴错窗口。
 const PASTE_ACTIVATE_TIMEOUT: Duration = Duration::from_millis(1500);
-/// 长按 Ctrl 呼出快捷键速览的按住时长。
-const PEEK_HOLD_MS: u64 = 3000;
+/// 长按 Ctrl 呼出快捷键速览的按住时长（2026-11-26 用户定：3 秒等太久）。
+const PEEK_HOLD_MS: u64 = 2000;
 
 pub struct Worker {
     shared: Arc<Shared>,
@@ -266,7 +266,7 @@ fn step_peek(shared: &Shared, triggered: &mut bool, enabled: bool, secure: bool,
         if !*triggered && now_ms.saturating_sub(since) >= PEEK_HOLD_MS {
             *triggered = true;
             shared.cheatsheet_seq.fetch_add(1, Ordering::Relaxed);
-            info("长按 Ctrl 3 秒，呼出快捷键速览");
+            info("长按 Ctrl 2 秒，呼出快捷键速览");
         }
         return; // 还按着（无论触发与否），不结算
     }
@@ -499,13 +499,19 @@ mod tests {
         assert!(!triggered);
         assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 0);
 
-        // 按住满 3 秒：触发一次
-        step_peek(&shared, &mut triggered, true, false, base + 3000);
+        // 按住满 2 秒：触发一次
+        step_peek(&shared, &mut triggered, true, false, base + PEEK_HOLD_MS);
         assert!(triggered);
         assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 1);
 
         // 继续按着：不重复触发
-        step_peek(&shared, &mut triggered, true, false, base + 5000);
+        step_peek(
+            &shared,
+            &mut triggered,
+            true,
+            false,
+            base + PEEK_HOLD_MS + 3000,
+        );
         assert_eq!(shared.cheatsheet_seq.load(Ordering::Relaxed), 1);
 
         // 松开（tap 清零）：补结束信号

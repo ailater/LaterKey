@@ -21,7 +21,7 @@ win_key_lock = true           # Win(⌘)+L 锁屏
 win_key_clipboard = true      # Win(⌘)+V 剪贴板历史面板：搜索历史、选中贴回
 task_manager = true           # Ctrl+Alt+Del 或 Ctrl+Esc 呼出强制退出窗口
 settings_hotkey = true          # Ctrl+Alt+K 全局唤出设置面板
-shortcuts_peek = true         # 长按物理 Ctrl 3 秒呼出快捷键速览浮窗
+shortcuts_peek = true         # 长按物理 Ctrl 2 秒呼出快捷键速览浮窗
 dock_click_minimize = true    # 再点一次前台应用的 Dock 图标 → 最小化
 
 # [apps] 不写就用内置列表：常见终端、浏览器、访达，以及整体不改的远程桌面/虚拟机。
