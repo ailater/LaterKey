@@ -52,10 +52,16 @@ const PANEL_BG: Color32 = Color32::from_rgba_unmultiplied_const(0x1a, 0x1b, 0x21
 const HEADER_BG: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 30);
 /// 组合键文字（近白）。
 const KEY_TEXT: Color32 = Color32::from_rgba_unmultiplied_const(0xe8, 0xea, 0xf5, 255);
+/// 键列强调色：让键帽符号从功能名称中脱出来，但不喧宾夺主。
+const KEY_ACCENT: Color32 = Color32::from_rgba_unmultiplied_const(0xb8, 0xc9, 0xff, 255);
 /// 功能名文字（略暗一档）。
 const NAME_TEXT: Color32 = Color32::from_rgba_unmultiplied_const(0xc9, 0xcd, 0xe0, 255);
+/// 标题文字，比普通行更亮一档。
+const HEADER_TEXT: Color32 = Color32::from_rgba_unmultiplied_const(0xf1, 0xf3, 0xff, 255);
 /// 键列宽：键右对齐到此列，名称列起点整齐。
-const KEY_COL: f32 = 128.0;
+const KEY_COL: f32 = 136.0;
+/// 键与功能名之间的留白。
+const KEY_NAME_GAP: f32 = 10.0;
 /// 行高（紧凑，对齐参考工具的密度）。
 const ROW_H: f32 = 19.0;
 /// 组标题条高。
@@ -426,24 +432,47 @@ fn header_bar(ui: &mut egui::Ui, title: &str, height: f32, font: f32, col_w: f32
         egui::vec2(ui.available_width(), height),
         egui::Sense::hover(),
     );
+    // 两层底色制造轻微的顶部高光，比单一灰条更有层次但不增加视觉噪声。
     ui.painter().rect_filled(rect, HEADER_RADIUS, HEADER_BG);
-    let text = truncate_to_width(ui, title, FontId::proportional(font), col_w - 20.0);
+    let highlight = egui::Rect::from_min_size(
+        rect.min + egui::vec2(1.0, 1.0),
+        egui::vec2((rect.width() - 2.0).max(0.0), 1.0),
+    );
+    ui.painter().rect_filled(
+        highlight,
+        1.0,
+        Color32::from_rgba_unmultiplied_const(255, 255, 255, 18),
+    );
+    // 左侧小色标统一提示「这里是一个快捷键组」，应用标题也共享同一语言。
+    let marker = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(7.0, 6.0),
+        egui::vec2(3.0, (height - 12.0).max(3.0)),
+    );
+    ui.painter().rect_filled(marker, 1.5, KEY_ACCENT);
+    let text = truncate_to_width(ui, title, FontId::proportional(font), col_w - 28.0);
     ui.painter().text(
-        rect.center(),
+        rect.center() + egui::vec2(4.0, 0.0),
         Align2::CENTER_CENTER,
         text,
         FontId::proportional(font),
-        KEY_TEXT,
+        HEADER_TEXT,
     );
 }
 
 /// 一行快捷键：分配矩形是**整行宽**，键右对齐到键列，名称紧随其后——
 /// 名称也画在矩形内（超宽截断加 …），下一行才不会和它叠在一起。
 fn shortcut_row(ui: &mut egui::Ui, key: &str, name: &str) {
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_H),
         egui::Sense::hover(),
     );
+    if resp.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            4.0,
+            Color32::from_rgba_unmultiplied_const(122, 162, 247, 14),
+        );
+    }
     let key_x = rect.left() + KEY_COL;
     draw_key_text(
         ui,
@@ -451,7 +480,7 @@ fn shortcut_row(ui: &mut egui::Ui, key: &str, name: &str) {
         Align2::RIGHT_CENTER,
         key,
     );
-    let name_x = key_x + 8.0;
+    let name_x = key_x + KEY_NAME_GAP;
     let max_w = (rect.right() - name_x).max(20.0);
     let name = truncate_to_width(ui, name, FontId::proportional(12.0), max_w);
     ui.painter().text(
@@ -504,7 +533,7 @@ fn draw_key_text(ui: &egui::Ui, anchor: egui::Pos2, align: Align2, text: &str) -
     let runs = split_script_runs(text);
     let mut galleys: Vec<_> = runs
         .iter()
-        .map(|&(cjk, ref s)| galley_for(cjk, s.clone(), KEY_TEXT))
+        .map(|&(cjk, ref s)| galley_for(cjk, s.clone(), KEY_ACCENT))
         .collect();
     // 末尾若是省略号段（…），颜色跟正文一档（理论上键名不截断，防御）
     let total_w: f32 = galleys.iter().map(|g| g.size().x).sum();
