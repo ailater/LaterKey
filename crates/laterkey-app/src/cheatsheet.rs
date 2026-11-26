@@ -195,7 +195,9 @@ impl CheatSheetView {
         let focused = ui.input(|i| i.viewport().focused);
         if focused == Some(true) {
             st.was_focused = true;
-        } else if focused == Some(false) && st.was_focused {
+        } else if focused == Some(false) && st.was_focused && !ui.input(|i| i.modifiers.ctrl) {
+            // Ctrl 仍按住时点击浮窗属于速览内交互，不当成点击外部；
+            // 否则「长按 Ctrl 打开 → Ctrl+点击」会被误判为失焦关闭。
             st.close = true;
         }
 
