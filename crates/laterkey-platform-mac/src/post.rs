@@ -56,6 +56,47 @@ fn chord_impl(keycode: i64, flags: u64) -> bool {
     }
 }
 
+/// 系统区快捷键（速览浮窗点系统组条目）用 System Events 特权注入执行。
+/// Dock 负责的一类系统热键（显示桌面/调度中心/启动台等）不认用户态合成的
+/// CGEvent——真机实测 HID 层投递与 pid 直投 Dock 都不响应，⌘⌥Esc 同类
+/// （2026-11-24/27 两次实测）；System Events 的 key code 等效真实按键，
+/// 这类热键全都认。普通应用菜单快捷键不要走这里，走 trigger_chord。
+/// osascript 要花上百毫秒，放独立线程，不卡点击回调所在的 UI 帧。
+pub fn trigger_chord_system(chord: Chord) -> bool {
+    std::thread::spawn(move || {
+        let mut mods = String::new();
+        if chord.flags & laterkey_core::flags::SHIFT != 0 {
+            mods.push_str("shift down, ");
+        }
+        if chord.flags & laterkey_core::flags::CONTROL != 0 {
+            mods.push_str("control down, ");
+        }
+        if chord.flags & laterkey_core::flags::ALTERNATE != 0 {
+            mods.push_str("option down, ");
+        }
+        if chord.flags & laterkey_core::flags::COMMAND != 0 {
+            mods.push_str("command down, ");
+        }
+        let script = if mods.is_empty() {
+            format!(
+                "tell application \"System Events\" to key code {}",
+                chord.keycode
+            )
+        } else {
+            format!(
+                "tell application \"System Events\" to key code {} using {{{}}}",
+                chord.keycode,
+                &mods[..mods.len() - 2]
+            )
+        };
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status();
+    });
+    true
+}
+
 /// 投递一组合成按键（按下 + 松开）。返回是否投递成功。
 /// 事件由 Cf（RAII）接管，任何提前返回都不会泄漏或双释放。
 pub fn chord(chord: Chord) -> bool {

@@ -89,31 +89,58 @@ pub fn ax_modifiers_to_flags(mask: i64) -> u64 {
     out
 }
 
-/// 菜单里的快捷键字符 → 面板可显示的文本。
+/// 菜单里的快捷键字符 → 文字形式的键名（物理键口径用）。
 ///
-/// 特殊符号先换成文字：egui 面板字体对 ⎋⇥⌫ 这类键帽符号缺字形
-/// （见 font.rs 的缺字清单），中英混排也统一走文字方案。
+/// 特殊符号和控制字符都换成文字：键帽符号只在 Mac 口径里用（见
+/// [`keycap_char`]），文字口径不混排符号。
 pub fn normalize_char(ch: &str) -> String {
-    match ch.trim() {
-        "⎋" | "␛" => "Esc".into(),
-        "⇥" => "Tab".into(),
-        "↩" | "⏎" | "↖" => "回车".into(),
-        "⌫" => "退格".into(),
-        "⌦" => "Del".into(),
-        "␣" => "空格".into(),
-        "⇧" => "Shift".into(),
-        "⇪" => "CapsLock".into(),
-        other => other.trim().to_string(),
+    match ch {
+        " " => "空格".into(),
+        "\x1b" => "Esc".into(),
+        "\t" => "Tab".into(),
+        "\r" | "\n" => "回车".into(),
+        "\x08" => "退格".into(),
+        _ => match ch.trim() {
+            "⎋" | "␛" => "Esc".into(),
+            "⇥" => "Tab".into(),
+            "↩" | "⏎" | "↖" => "回车".into(),
+            "⌫" => "退格".into(),
+            "⌦" => "Del".into(),
+            "␣" => "空格".into(),
+            "⇧" => "Shift".into(),
+            "⇪" => "CapsLock".into(),
+            other => other.trim().to_string(),
+        },
     }
 }
 
-/// 虚拟键码 → 面板显示名。数字与字母回退大写字符。
+/// 菜单里的快捷键字符 → Mac 口径的原生键帽符号，与系统菜单里显示的一致。
+///
+/// 字形由速览的键帽字体链提供：⎋⌫⌦ 在 SF 里，␣⇥↩ 在 Apple Symbols 里
+/// （两者都逐个码位核对过，见 font.rs）。
+pub fn keycap_char(ch: &str) -> String {
+    match ch {
+        " " => "␣".into(),
+        "\x1b" => "⎋".into(),
+        "\t" => "⇥".into(),
+        "\r" | "\n" => "↩".into(),
+        "\x08" => "⌫".into(),
+        _ => match ch.trim() {
+            "␛" => "⎋".into(),
+            "⏎" | "↖" => "↩".into(),
+            other => other.trim().to_string(),
+        },
+    }
+}
+
+/// 虚拟键码 → 文字形式的键名。数字与字母回退大写字符。
 pub fn virtual_key_name(code: i64) -> Option<String> {
     let named = match code {
         keys::RETURN => "回车",
         keys::TAB => "Tab",
         keys::SPACE => "空格",
         keys::DELETE => "退格",
+        0x75 => "Del",
         keys::ESCAPE => "Esc",
         keys::LEFT => "←",
         keys::RIGHT => "→",
@@ -145,7 +172,25 @@ pub fn virtual_key_name(code: i64) -> Option<String> {
     Some(named.into())
 }
 
-/// 主键的显示文本。
+/// 虚拟键码 → Mac 口径的原生键帽符号。数字、字母、F 键与文字口径相同。
+pub fn virtual_key_symbol(code: i64) -> Option<String> {
+    let symbol = match code {
+        keys::RETURN => "↩",
+        keys::TAB => "⇥",
+        keys::SPACE => "␣",
+        keys::DELETE => "⌫",
+        0x75 => "⌦",
+        keys::ESCAPE => "⎋",
+        0x73 => "↖",
+        0x77 => "↘",
+        0x74 => "⇞",
+        0x79 => "⇟",
+        _ => return virtual_key_name(code),
+    };
+    Some(symbol.into())
+}
+
+/// 主键的文字形式键名。读不出来返回 None（调用方跳过该条）。
 pub fn key_label(key: &ShortcutKey) -> Option<String> {
     match key {
         ShortcutKey::Char(ch) => {
@@ -153,6 +198,17 @@ pub fn key_label(key: &ShortcutKey) -> Option<String> {
             (!normalized.is_empty()).then_some(normalized)
         }
         ShortcutKey::VirtualKey(code) => virtual_key_name(*code),
+    }
+}
+
+/// 主键的 Mac 口径键帽符号。读不出来返回 None（调用方跳过该条）。
+pub fn key_symbol(key: &ShortcutKey) -> Option<String> {
+    match key {
+        ShortcutKey::Char(ch) => {
+            let symbol = keycap_char(ch);
+            (!symbol.is_empty()).then_some(symbol)
+        }
+        ShortcutKey::VirtualKey(code) => virtual_key_symbol(*code),
     }
 }
 
@@ -190,40 +246,58 @@ pub fn modifier_labels(modifiers: u64, style: Style, d: &DisplayRules) -> Vec<St
     out
 }
 
-/// 一条快捷键的完整显示文本。物理口径 `Ctrl+Shift+C`；Mac 口径是系统
-/// 键帽符号的紧凑串（`⇧⌘C`、`fn⌘D`），顺序 fn→⌃→⌥→⇧→⌘。键帽符号的
-/// 字形由 font.rs 的 SF 兜底链提供（SFNS.ttf 实测齐全）。
-/// 主键都读不出来时返回 None（调用方跳过该条）。
+/// 一条快捷键拆成「修饰键」与「主键」两段显示文本。
+///
+/// 速览把两段分开定位（修饰键右对齐、主键左对齐，与系统菜单一致），所以
+/// 不能只给一个拼好的串。Mac 口径的修饰键是键帽符号 `fn ⌃⌥⇧⌘`，主键是
+/// 原生键帽符号；物理键口径是 `Ctrl+Shift+` 加文字键名。主键读不出来返回
+/// None（调用方跳过该条）。
+pub fn format_chord_parts(
+    modifiers: u64,
+    key: &ShortcutKey,
+    style: Style,
+    d: &DisplayRules,
+) -> Option<(String, String)> {
+    match style {
+        Style::Mac => {
+            let mut mods = String::new();
+            if modifiers & flags::SECONDARY_FN != 0 {
+                mods.push_str("fn ");
+            }
+            if modifiers & flags::CONTROL != 0 {
+                mods.push('⌃');
+            }
+            if modifiers & flags::ALTERNATE != 0 {
+                mods.push('⌥');
+            }
+            if modifiers & flags::SHIFT != 0 {
+                mods.push('⇧');
+            }
+            if modifiers & flags::COMMAND != 0 {
+                mods.push('⌘');
+            }
+            Some((mods, key_symbol(key)?))
+        }
+        Style::Physical => {
+            let mut labels = modifier_labels(modifiers, style, d);
+            if !labels.is_empty() {
+                labels.push(String::new());
+            }
+            Some((labels.join("+"), key_label(key)?))
+        }
+    }
+}
+
+/// 一条快捷键的完整显示文本：Mac 口径 `⇧⌘C`、`fn D`；物理键口径
+/// `Ctrl+Shift+C`。主键读不出来返回 None（调用方跳过该条）。
 pub fn format_chord(
     modifiers: u64,
     key: &ShortcutKey,
     style: Style,
     d: &DisplayRules,
 ) -> Option<String> {
-    let key = key_label(key)?;
-    if style == Style::Mac {
-        let mut out = String::new();
-        if modifiers & flags::SECONDARY_FN != 0 {
-            out.push_str("fn ");
-        }
-        if modifiers & flags::CONTROL != 0 {
-            out.push('⌃');
-        }
-        if modifiers & flags::ALTERNATE != 0 {
-            out.push('⌥');
-        }
-        if modifiers & flags::SHIFT != 0 {
-            out.push('⇧');
-        }
-        if modifiers & flags::COMMAND != 0 {
-            out.push('⌘');
-        }
-        out.push_str(&key);
-        return Some(out);
-    }
-    let mut parts = modifier_labels(modifiers, style, d);
-    parts.push(key);
-    Some(parts.join("+"))
+    let (mods, key) = format_chord_parts(modifiers, key, style, d)?;
+    Some(mods + &key)
 }
 
 #[cfg(test)]
@@ -253,6 +327,19 @@ mod tests {
         assert_eq!(normalize_char("⌫"), "退格");
         assert_eq!(normalize_char(" C "), "C");
         assert_eq!(normalize_char(""), "");
+        assert_eq!(normalize_char(" "), "空格");
+        assert_eq!(normalize_char("\x1b"), "Esc");
+    }
+
+    #[test]
+    fn keycap_forms_keep_system_menu_glyphs() {
+        assert_eq!(keycap_char("⎋"), "⎋");
+        assert_eq!(keycap_char("\x1b"), "⎋");
+        assert_eq!(keycap_char("\t"), "⇥");
+        assert_eq!(keycap_char("↩"), "↩");
+        assert_eq!(keycap_char("⌫"), "⌫");
+        assert_eq!(keycap_char(" "), "␣");
+        assert_eq!(keycap_char(" C "), "C");
     }
 
     #[test]
@@ -260,9 +347,24 @@ mod tests {
         assert_eq!(virtual_key_name(keys::RETURN).as_deref(), Some("回车"));
         assert_eq!(virtual_key_name(keys::ESCAPE).as_deref(), Some("Esc"));
         assert_eq!(virtual_key_name(keys::LEFT).as_deref(), Some("←"));
+        assert_eq!(virtual_key_name(0x75).as_deref(), Some("Del"));
         assert_eq!(virtual_key_name(keys::F2).as_deref(), Some("F2"));
         assert_eq!(virtual_key_name(keys::C).as_deref(), Some("C"));
         assert_eq!(virtual_key_name(0x999), None);
+    }
+
+    #[test]
+    fn virtual_keys_have_keycap_symbols() {
+        assert_eq!(virtual_key_symbol(keys::RETURN).as_deref(), Some("↩"));
+        assert_eq!(virtual_key_symbol(keys::TAB).as_deref(), Some("⇥"));
+        assert_eq!(virtual_key_symbol(keys::SPACE).as_deref(), Some("␣"));
+        assert_eq!(virtual_key_symbol(keys::DELETE).as_deref(), Some("⌫"));
+        assert_eq!(virtual_key_symbol(0x75).as_deref(), Some("⌦"));
+        assert_eq!(virtual_key_symbol(keys::ESCAPE).as_deref(), Some("⎋"));
+        assert_eq!(virtual_key_symbol(keys::UP).as_deref(), Some("↑"));
+        assert_eq!(virtual_key_symbol(0x67).as_deref(), Some("F11"));
+        assert_eq!(virtual_key_symbol(keys::C).as_deref(), Some("C"));
+        assert_eq!(virtual_key_symbol(0x999), None);
     }
 
     #[test]
@@ -307,6 +409,39 @@ mod tests {
         assert_eq!(
             format_chord(SECONDARY_FN, &dd, Style::Mac, &d).as_deref(),
             Some("fn D")
+        );
+    }
+
+    #[test]
+    fn chord_parts_split_modifiers_from_the_main_key() {
+        let d = DisplayRules::default();
+        let c = ShortcutKey::Char("C".into());
+        // Mac：修饰键是键帽符号，主键是原生键帽符号
+        assert_eq!(
+            format_chord_parts(CONTROL | SHIFT, &c, Style::Mac, &d),
+            Some(("⌃⇧".into(), "C".into()))
+        );
+        assert_eq!(
+            format_chord_parts(SECONDARY_FN, &c, Style::Mac, &d),
+            Some(("fn ".into(), "C".into()))
+        );
+        assert_eq!(
+            format_chord_parts(0, &ShortcutKey::VirtualKey(keys::SPACE), Style::Mac, &d),
+            Some((String::new(), "␣".into()))
+        );
+        // 物理：修饰键带连接符，主键是文字
+        assert_eq!(
+            format_chord_parts(CONTROL | SHIFT, &c, Style::Physical, &d),
+            Some(("Win+Shift+".into(), "C".into()))
+        );
+        assert_eq!(
+            format_chord_parts(
+                0,
+                &ShortcutKey::VirtualKey(keys::SPACE),
+                Style::Physical,
+                &d
+            ),
+            Some((String::new(), "空格".into()))
         );
     }
 

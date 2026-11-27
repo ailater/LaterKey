@@ -26,10 +26,10 @@ shortcuts_peek = true         # 长按物理 Ctrl 2 秒呼出快捷键速览浮�
 dock_click_minimize = true    # 再点一次前台应用的 Dock 图标 → 最小化
 
 [cheatsheet]
-title_size = 13.5            # 应用名与系统标题字号
-  group_size = 12.5            # 快捷键分组标题字号
-key_size = 12.0               # 快捷键字号
-name_size = 12.0              # 功能名称字号
+title_size = 17.0             # 应用名与「系统」主标题字号
+group_size = 16.0             # 分组标题字号
+key_size = 14.0               # 快捷键字号
+name_size = 14.0              # 功能名称字号
 
 # [apps] 不写就用内置列表：常见终端、浏览器、访达，以及整体不改的远程桌面/虚拟机。
 # 要改就整段写出来（terminals / browsers / finder / passthrough，都是 bundle id 数组），
@@ -137,11 +137,12 @@ pub struct CheatsheetConfig {
 
 impl Default for CheatsheetConfig {
     fn default() -> Self {
+        // 2026-11-26 按参考工具的截图逐像素量出来的默认值
         Self {
-            title_size: 13.5,
-            group_size: 12.5,
-            key_size: 12.0,
-            name_size: 12.0,
+            title_size: 17.0,
+            group_size: 16.0,
+            key_size: 14.0,
+            name_size: 14.0,
         }
     }
 }

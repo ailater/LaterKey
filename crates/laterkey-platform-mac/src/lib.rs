@@ -40,7 +40,7 @@ pub use focus::{
 #[cfg(target_os = "macos")]
 pub use lock::{immediate_available, lock_screen, LockMethod};
 #[cfg(target_os = "macos")]
-pub use post::trigger_chord;
+pub use post::{trigger_chord, trigger_chord_system};
 #[cfg(target_os = "macos")]
 pub use shortcuts::{read_cheatsheet, CheatSheet};
 #[cfg(target_os = "macos")]
