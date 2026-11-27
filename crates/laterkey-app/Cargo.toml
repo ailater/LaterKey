@@ -15,8 +15,8 @@ ctrlc = "3"
 libc = "0.2"
 objc2 = "0.6"
 raw-window-handle = "0.6"
-laterkey-core = { version = "0.1.0", path = "../laterkey-core" }
-laterkey-platform-mac = { version = "0.1.0", path = "../laterkey-platform-mac" }
+laterkey-core = { path = "../laterkey-core" }
+laterkey-platform-mac = { path = "../laterkey-platform-mac" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 # 设置面板与托盘（与 LaterScreen 同栈）
