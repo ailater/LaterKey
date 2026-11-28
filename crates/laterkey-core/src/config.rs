@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::flags::{ALTERNATE, COMMAND, CONTROL, SHIFT};
 use crate::keys;
-use crate::remap::{groups, Chord, Rules, Substitute};
+use crate::remap::{groups, Chord, Rules, Substitute, TerminalOpen};
 
 /// 配置文件示例，内容与默认值完全一致。有测试保证它能解析、能编译，
 /// 并且编译结果与不带配置文件时相同。
@@ -22,8 +22,18 @@ win_key_clipboard = true      # Win(⌘)+V 剪贴板历史面板：搜索历史�
 task_manager = true           # Ctrl+Alt+Del 或 Ctrl+Esc 呼出强制退出窗口
 settings_hotkey = true          # Ctrl+Alt+K 全局唤出设置面板
 shortcuts_peek = true         # 长按物理 Ctrl 2 秒呼出快捷键速览浮窗
+finder_open_terminal = true   # 访达里 Ctrl+/ 在当前文件夹打开终端
 
 dock_click_minimize = true    # 再点一次前台应用的 Dock 图标 → 最小化
+
+# [terminal] 访达里 Ctrl+/ 拉起哪个终端。app 取预设名（laterterm / terminal /
+# iterm / ghostty / wezterm / alacritty / kitty），auto = 装了 LaterTerm 用
+# LaterTerm、否则系统自带终端；也可以写带点号的 bundle id 或应用名。
+# command 非空时优先于 app，{path} 会替换成访达当前文件夹（经 sh 执行）。
+# 设置面板的下拉选择会覆盖这里的 app（command 不受影响）。
+[terminal]
+app = "auto"
+command = ""
 
 [cheatsheet]
 title_size = 17.0             # 应用名与「系统」主标题字号
@@ -55,6 +65,8 @@ pub struct Config {
     pub apps: AppsConfig,
     #[serde(default)]
     pub cheatsheet: CheatsheetConfig,
+    #[serde(default)]
+    pub terminal: TerminalConfig,
     /// 不写就是默认的两条（F2 → 回车、F5 → ⌘R）；写 `substitute = []` 可全部关掉
     #[serde(default = "default_substitutes")]
     pub substitute: Vec<SubstituteConfig>,
@@ -82,6 +94,7 @@ impl Default for Config {
             remap: RemapConfig::default(),
             apps: AppsConfig::default(),
             cheatsheet: CheatsheetConfig::default(),
+            terminal: TerminalConfig::default(),
             substitute: default_substitutes(),
         }
     }
@@ -99,6 +112,7 @@ pub struct RemapConfig {
     pub task_manager: bool,
     pub settings_hotkey: bool,
     pub shortcuts_peek: bool,
+    pub finder_open_terminal: bool,
     pub dock_click_minimize: bool,
 }
 
@@ -116,7 +130,26 @@ impl Default for RemapConfig {
             settings_hotkey: true,
             // 长按 Ctrl 速览默认开；CheatSheet 式手势，期间无其他按键才触发
             shortcuts_peek: true,
+            // 访达 Ctrl+/ 打开终端默认开；拉谁由 [terminal] 决定
+            finder_open_terminal: true,
             dock_click_minimize: true,
+        }
+    }
+}
+
+/// 访达里 Ctrl+/ 打开哪个终端。见 remap::TerminalOpen。
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct TerminalConfig {
+    pub app: String,
+    pub command: String,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            app: "auto".into(),
+            command: String::new(),
         }
     }
 }
@@ -317,6 +350,17 @@ pub fn compile(cfg: &Config) -> Result<Compiled, String> {
     fill(&cfg.apps.finder, groups::FINDER)?;
     fill(&cfg.apps.passthrough, groups::PASSTHROUGH)?;
 
+    // [terminal] 写错了也在这里报：app 与 command 二选一必须有；自定义命令
+    // 里没有 {path} 的话，打开的终端落不到访达当前文件夹，等于配置失效
+    let command = cfg.terminal.command.trim();
+    let app = cfg.terminal.app.trim();
+    if command.is_empty() && app.is_empty() {
+        return Err("[terminal] app 与 command 不能同时为空".into());
+    }
+    if !command.is_empty() && !command.contains("{path}") {
+        return Err("[terminal] command 里没有 {path} 占位符".into());
+    }
+
     Ok(Compiled {
         rules: Rules {
             ctrl_as_cmd: cfg.remap.ctrl_as_cmd,
@@ -328,6 +372,11 @@ pub fn compile(cfg: &Config) -> Result<Compiled, String> {
             task_manager: cfg.remap.task_manager,
             settings_hotkey: cfg.remap.settings_hotkey,
             shortcuts_peek: cfg.remap.shortcuts_peek,
+            finder_terminal: cfg.remap.finder_open_terminal,
+            terminal_open: TerminalOpen {
+                app: app.to_string(),
+                command: command.to_string(),
+            },
             substitutes,
         },
         groups,
@@ -444,6 +493,38 @@ mod tests {
             ..Config::default()
         };
         assert!(compile(&cfg).unwrap_err().contains("bundle id"));
+    }
+
+    #[test]
+    fn terminal_defaults_and_custom_command() {
+        let compiled = compile(&Config::default()).unwrap();
+        assert!(compiled.rules.finder_terminal);
+        assert_eq!(compiled.rules.terminal_open.app, "auto");
+        assert!(compiled.rules.terminal_open.command.is_empty());
+
+        // 自定义命令优先于 app；app 两边的空白裁掉
+        let cfg =
+            parse("[terminal]\napp = \" Warp \"\ncommand = \"open -na Warp --args {path}\"\n")
+                .unwrap();
+        let compiled = compile(&cfg).unwrap();
+        assert_eq!(
+            compiled.rules.terminal_open,
+            crate::remap::TerminalOpen {
+                app: "Warp".into(),
+                command: "open -na Warp --args {path}".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn bad_terminal_config_is_rejected() {
+        let err = compile(&parse("[terminal]\napp = \"\"\ncommand = \"\"\n").unwrap()).unwrap_err();
+        assert!(err.contains("不能同时为空"), "{err}");
+        let err = compile(&parse("[terminal]\ncommand = \"open .\"\n").unwrap()).unwrap_err();
+        assert!(err.contains("{path}"), "{err}");
+        // 未知字段在 parse 阶段就被拒（deny_unknown_fields），到不了 compile
+        let err = parse("[terminal]\nbrowser = \"x\"\n").unwrap_err();
+        assert!(err.contains("browser"), "{err}");
     }
 
     #[test]

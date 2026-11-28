@@ -402,6 +402,20 @@ fn handle(shared: &Shared, job: Job) {
             shared.settings_seq.fetch_add(1, Ordering::Relaxed);
             info("全局快捷键唤出设置面板");
         }
+        Job::Action(laterkey_core::Action::OpenTerminalHere) => {
+            // 访达 Ctrl+/：问 Finder 要当前文件夹再拉终端。取拉起配置读
+            // shared.rules（后台线程是唯一写方）；osascript 与 open 都是
+            // 上百毫秒级子进程，open_terminal_here 内部转独立线程，不占
+            // worker 循环。
+            let open = shared
+                .rules
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .terminal_open
+                .clone();
+            super::terminal::open_terminal_here(open);
+            info("访达里 Ctrl+/：打开终端");
+        }
         Job::Action(laterkey_core::Action::TaskManager) => {
             // 任务管理器 = macOS 强制退出窗口（⌘⌥Esc）。这个 WindowServer 热键
             // 不认用户态合成的 CGEvent——真机实测：完整修饰键手势序列（含

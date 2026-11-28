@@ -589,8 +589,58 @@ fn apps_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {
                 "F5 当作 Command+R，仅浏览器前台时",
                 &mut t.browser_f5,
             );
+            *changed |= row(
+                ui,
+                "访达里 Ctrl+/ 打开终端",
+                "在访达当前文件夹拉起终端，用哪个终端在下面选",
+                &mut t.finder_terminal,
+            );
+            if t.finder_terminal {
+                *changed |= terminal_picker(ui, t);
+            }
         });
     });
+}
+
+/// 终端选择下拉：自动 + 系统里检测到的已装终端（Launch Services 登记表，
+/// 5 秒缓存）。选择存 Toggles 持久化到 toggles.toml，覆盖 config.toml 的
+/// [terminal] app（自定义 command 模板不受影响，仍以 config.toml 为准）。
+fn terminal_picker(ui: &mut egui::Ui, t: &mut Toggles) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("打开用的终端").size(12.5).color(DESC));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let selected = egui::ComboBox::from_id_salt("finder-terminal-choice")
+                .width(220.0)
+                .selected_text(terminal_label(&t.terminal_app))
+                .show_ui(ui, |ui| {
+                    let auto = "自动（装了 LaterTerm 用 LaterTerm，否则系统终端）";
+                    changed |= ui
+                        .selectable_value(&mut t.terminal_app, "auto".to_string(), auto)
+                        .changed();
+                    for (preset, name) in laterkey_platform_mac::detected_terminals() {
+                        changed |= ui
+                            .selectable_value(&mut t.terminal_app, preset.to_string(), name)
+                            .changed();
+                    }
+                });
+            let _ = selected;
+        });
+    });
+    ui.add_space(6.0);
+    changed
+}
+
+/// 下拉当前项的显示文案：auto 之外按检测结果反查显示名，查不到显示原值。
+fn terminal_label(app: &str) -> String {
+    if app == "auto" {
+        return "自动".to_string();
+    }
+    laterkey_platform_mac::detected_terminals()
+        .into_iter()
+        .find(|(preset, _)| *preset == app)
+        .map(|(_, name)| name.to_string())
+        .unwrap_or_else(|| app.to_string())
 }
 
 fn mouse_section(ui: &mut egui::Ui, t: &mut Toggles, changed: &mut bool) {

@@ -15,6 +15,7 @@ pub const RETURN: i64 = 0x24;
 pub const TAB: i64 = 0x30;
 pub const SPACE: i64 = 0x31;
 pub const K: i64 = 0x28;
+pub const SLASH: i64 = 0x2C;
 pub const DELETE: i64 = 0x33;
 pub const ESCAPE: i64 = 0x35;
 
@@ -100,6 +101,8 @@ pub const NAMED: &[(&str, i64)] = &[
     ("x", 0x07),
     ("y", 0x10),
     ("z", 0x06),
+    ("slash", SLASH),
+    ("/", SLASH),
 ];
 
 /// 键名转虚拟键码；找不到返回 None。

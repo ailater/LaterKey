@@ -18,7 +18,9 @@ pub use clipboard::{
     MAX_IMAGE_TOTAL_BYTES, MAX_TEXT_BYTES,
 };
 pub use config::{compile, parse, parse_chord, CheatsheetConfig, Compiled, Config, GroupTable};
-pub use remap::{groups, Action, Chord, Decision, Env, Input, Kind, Remapper, Rules, Substitute};
+pub use remap::{
+    groups, Action, Chord, Decision, Env, Input, Kind, Remapper, Rules, Substitute, TerminalOpen,
+};
 pub use shortcuts::{
     ax_modifiers_to_flags, format_chord, format_chord_parts, key_symbol, normalize_char,
     virtual_key_name, DisplayRules, ShortcutEntry, ShortcutGroup, ShortcutKey, Style,

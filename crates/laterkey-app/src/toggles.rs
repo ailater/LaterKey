@@ -26,6 +26,11 @@ pub struct Toggles {
     pub dock_click_minimize: bool,
     pub finder_f2: bool,
     pub browser_f5: bool,
+    /// 访达里 Ctrl+/ 在当前文件夹打开终端（拉谁由 config.toml [terminal] 决定）
+    pub finder_terminal: bool,
+    /// 打开哪个终端：auto = 装了 LaterTerm 用 LaterTerm，否则系统自带终端；
+    /// 也可以是预设名（laterterm/terminal/iterm/…），设置面板下拉写这里
+    pub terminal_app: String,
 }
 
 impl Default for Toggles {
@@ -46,6 +51,8 @@ impl Default for Toggles {
             dock_click_minimize: true,
             finder_f2: true,
             browser_f5: true,
+            finder_terminal: true,
+            terminal_app: "auto".into(),
         }
     }
 }
@@ -91,6 +98,12 @@ pub fn apply(base: &Config, toggles: &Toggles) -> Result<Compiled, String> {
     cfg.remap.settings_hotkey = toggles.master && toggles.settings_hotkey;
     cfg.remap.shortcuts_peek = toggles.master && toggles.shortcuts_peek;
     cfg.remap.dock_click_minimize = toggles.master && toggles.dock_click_minimize;
+    cfg.remap.finder_open_terminal = toggles.master && toggles.finder_terminal;
+    // 面板下拉的选择覆盖 config.toml [terminal] 的 app（auto = 不覆盖，
+    // 保持配置值——默认也是 auto，由平台层按安装状态解析）
+    if toggles.terminal_app != "auto" {
+        cfg.terminal.app = toggles.terminal_app.clone();
+    }
     cfg.substitute
         .retain(|sub| match sub.key.to_ascii_lowercase().as_str() {
             "f2" => toggles.finder_f2,

@@ -5,7 +5,7 @@
 
 use crate::flags::{self, ALTERNATE, ANY_MODIFIER, COMMAND, CONTROL, L_ALT};
 use crate::keys::{
-    self, DELETE, ESCAPE, K, L, LEFT, RIGHT, RIGHT_COMMAND, RIGHT_CONTROL, SPACE, TAB, V,
+    self, DELETE, ESCAPE, K, L, LEFT, RIGHT, RIGHT_COMMAND, RIGHT_CONTROL, SLASH, SPACE, TAB, V,
 };
 
 /// 事件类型。修饰键没有 KeyDown/KeyUp，只有 FlagsChanged。
@@ -94,6 +94,29 @@ pub enum Action {
     TaskManager,
     /// 全局快捷键唤出设置面板
     OpenSettings,
+    /// 访达里 Ctrl+/：在当前文件夹打开配置的终端
+    OpenTerminalHere,
+}
+
+/// 访达「在此处打开终端」要拉起的终端。由配置编译而来，运行期只读。
+/// 二选一：`command` 非空时优先（`{path}` 占位符，经 sh 执行）；
+/// 否则按 `app` 查预设（laterterm / terminal / iterm / ghostty / …）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalOpen {
+    /// 预设名，或带点号的 bundle id（走 `open -b`）、应用名（走 `open -a`）；
+    /// `auto` = 装了 LaterTerm 用 LaterTerm，否则系统自带终端（平台层解析）
+    pub app: String,
+    /// 自定义命令模板，如 `open -na Warp --args {path}`；空 = 用预设
+    pub command: String,
+}
+
+impl Default for TerminalOpen {
+    fn default() -> Self {
+        Self {
+            app: "auto".into(),
+            command: String::new(),
+        }
+    }
 }
 
 /// 一组合成按键：键码 + 标志位。
@@ -147,6 +170,10 @@ pub struct Rules {
     pub settings_hotkey: bool,
     /// 快捷键速览：长按物理 Ctrl 2 秒呼出浮窗
     pub shortcuts_peek: bool,
+    /// 访达里物理 Ctrl+/ 在当前文件夹打开终端
+    pub finder_terminal: bool,
+    /// 打开哪个终端、怎么打开
+    pub terminal_open: TerminalOpen,
     pub substitutes: Vec<Substitute>,
 }
 
@@ -163,6 +190,8 @@ impl Default for Rules {
             task_manager: true,
             settings_hotkey: true,
             shortcuts_peek: true,
+            finder_terminal: true,
+            terminal_open: TerminalOpen::default(),
             substitutes: Vec::new(),
         }
     }
@@ -414,6 +443,16 @@ impl Remapper {
             if self.rules.task_manager && ev.keycode == ESCAPE && mods == CONTROL {
                 self.swallowed.push(ev.keycode);
                 return Decision::Action(Action::TaskManager);
+            }
+            // 访达里物理 Ctrl+/ 在当前文件夹打开终端。仅前台是访达时拦截，
+            // 其他应用里 Ctrl+/ 照常走改写（→ ⌘/）；组合多按 Shift 等不触发。
+            if self.rules.finder_terminal
+                && ev.keycode == SLASH
+                && mods == CONTROL
+                && env.has(groups::FINDER)
+            {
+                self.swallowed.push(ev.keycode);
+                return Decision::Action(Action::OpenTerminalHere);
             }
         }
 
@@ -1379,6 +1418,69 @@ mod tests {
         assert!(
             matches!(got, Decision::Rewrite { .. }),
             "开关关时 Ctrl+Esc 应走改写，实际 {got:?}"
+        );
+    }
+
+    // ---------------- 访达里 Ctrl+/ 打开终端
+
+    #[test]
+    fn finder_ctrl_slash_opens_terminal_only_in_finder() {
+        let env = finder();
+        let mut r = Remapper::new(Rules::default());
+        assert_eq!(
+            r.on_input(Input::key_down(keys::SLASH, CTL_DOWN), &env),
+            Decision::Action(Action::OpenTerminalHere)
+        );
+        // 松开跟着吞
+        assert_eq!(
+            r.on_input(Input::key_up(keys::SLASH, CTL_DOWN), &env),
+            Decision::Consume
+        );
+
+        // 非访达前台：照常走 Ctrl→⌘ 改写，⌘/ 原义保留
+        let mut r = Remapper::new(Rules::default());
+        r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &plain());
+        assert_eq!(
+            r.on_input(Input::key_down(keys::SLASH, CTL_DOWN), &plain()),
+            Decision::Rewrite {
+                keycode: keys::SLASH,
+                flags: CMD_L
+            }
+        );
+
+        // 开关关掉：访达里也走改写
+        let mut r = Remapper::new(Rules {
+            finder_terminal: false,
+            ..Default::default()
+        });
+        r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &env);
+        let got = r.on_input(Input::key_down(keys::SLASH, CTL_DOWN), &env);
+        assert!(
+            matches!(got, Decision::Rewrite { .. }),
+            "关闭后应改写，实际 {got:?}"
+        );
+    }
+
+    #[test]
+    fn finder_terminal_requires_exact_ctrl() {
+        let env = finder();
+        // 多了 Shift 不触发（→ ⌘⇧/）
+        let mut r = Remapper::new(Rules::default());
+        r.on_input(Input::flags_changed(keys::CONTROL, CTL_DOWN), &env);
+        let got = r.on_input(Input::key_down(keys::SLASH, CTL_DOWN | SHIFT_DOWN), &env);
+        assert!(
+            matches!(got, Decision::Rewrite { .. }),
+            "Ctrl+Shift+/ 应走改写，实际 {got:?}"
+        );
+        // 按住不放的重复事件只吞，不再触发
+        let mut r = Remapper::new(Rules::default());
+        assert_eq!(
+            r.on_input(Input::key_down(keys::SLASH, CTL_DOWN), &env),
+            Decision::Action(Action::OpenTerminalHere)
+        );
+        assert_eq!(
+            r.on_input(Input::key_down(keys::SLASH, CTL_DOWN).repeated(), &env),
+            Decision::Consume
         );
     }
 

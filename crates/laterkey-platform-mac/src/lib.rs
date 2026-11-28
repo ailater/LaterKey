@@ -26,6 +26,8 @@ mod shortcuts;
 #[cfg(target_os = "macos")]
 mod tap;
 #[cfg(target_os = "macos")]
+mod terminal;
+#[cfg(target_os = "macos")]
 mod worker;
 
 #[cfg(target_os = "macos")]
@@ -45,6 +47,8 @@ pub use post::{trigger_chord, trigger_chord_system};
 pub use shortcuts::{read_cheatsheet, CheatSheet};
 #[cfg(target_os = "macos")]
 pub use tap::{decide_key, Effect, EventTap, Job, Outcome, Shared, Stats, TapOptions, Trace};
+#[cfg(target_os = "macos")]
+pub use terminal::{detected_terminals, open_terminal_here};
 #[cfg(target_os = "macos")]
 pub use worker::{PanelCommand, Worker};
 

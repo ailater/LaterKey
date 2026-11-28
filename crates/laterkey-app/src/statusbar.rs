@@ -30,6 +30,7 @@ const ITEMS: &[(&str, &str)] = &[
     ("dock_click_minimize", "再点 Dock 图标最小化"),
     ("finder_f2", "访达里 F2 重命名"),
     ("browser_f5", "浏览器里 F5 刷新"),
+    ("finder_terminal", "访达里 Ctrl+/ 打开终端"),
 ];
 
 /// 用内嵌 PNG 生成模板图标。失败则退回无图标（菜单照样可用）。
@@ -122,6 +123,7 @@ fn field(t: &Toggles, id: &str) -> bool {
         "dock_click_minimize" => t.dock_click_minimize,
         "finder_f2" => t.finder_f2,
         "browser_f5" => t.browser_f5,
+        "finder_terminal" => t.finder_terminal,
         _ => false,
     }
 }
